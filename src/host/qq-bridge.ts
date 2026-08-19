@@ -133,6 +133,8 @@ export class QQBridge {
   private tokenExpiresAt = 0
   /** 单聊流式/群聊定稿发送器。 */
   private sender: QqMessageSender
+  /** 连续重连次数（退避用，READY 后重置）。 */
+  private reconnectAttempts = 0
   private recentMsgIds = new Set<string>()
   status: BridgeStatus = { state: 'idle', detail: '', connectedAt: null }
 
@@ -247,17 +249,22 @@ export class QQBridge {
       this.clearHeartbeat()
       this.ws = null
       if (!this.stopped) {
-        console.warn('[dsh-message-gateway] qq gateway closed, reconnect in 3s')
+        // 状态如实更新为「连接中」，避免控制台显示离线而插件仍显示已连接。
+        this.setStatus('connecting', 'reconnect')
+        // 退避：3s 起，最大 60s；READY 后重置。
+        const delay = Math.min(3000 * 2 ** this.reconnectAttempts, 60_000)
+        this.reconnectAttempts += 1
+        console.warn(`[dsh-message-gateway] qq gateway closed, reconnect in ${delay}ms`)
         setTimeout(() => {
           if (this.stopped) return
-          // 重连前刷新 token + 接入点（token 会过期）。
-          void this.ensureToken().then(async (ok) => {
-            if (this.stopped || !ok) return
+          // 重连前强制取新 token（旧 token 可能已被平台静默作废）+ 新接入点。
+          void this.getAccessToken().then(async (token) => {
+            if (this.stopped || token === null) return
             const u = await this.getGatewayUrl()
             if (this.stopped || u === null) return
             this.connect(u)
           })
-        }, 3000)
+        }, delay)
       }
     }
   }
@@ -283,6 +290,7 @@ export class QQBridge {
       }
       case 0: {
         if (payload.t === 'READY') {
+          this.reconnectAttempts = 0
           this.setStatus('connected', 'qq')
           console.log('[dsh-message-gateway] qq READY')
         } else if (payload.t === 'C2C_MESSAGE_CREATE') {
@@ -292,8 +300,9 @@ export class QQBridge {
         }
         break
       }
-      case 9: { // INVALID_SESSION：日志后由 onclose 重连
-        console.warn('[dsh-message-gateway] qq identify rejected (INVALID_SESSION) — 请确认控制台事件订阅为 WebSocket 长连接')
+      case 9: { // INVALID_SESSION：token 可能被平台静默作废 → 强制刷新后重连
+        console.warn('[dsh-message-gateway] qq identify rejected (INVALID_SESSION), refreshing token')
+        this.accessToken = null // 强制下次重连取新 token
         this.ws?.close()
         break
       }
