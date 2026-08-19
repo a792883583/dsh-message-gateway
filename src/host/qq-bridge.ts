@@ -47,6 +47,75 @@ function qqEd25519Key(secret: string): KeyObject {
   return createPrivateKey({ key: der, format: 'der', type: 'pkcs8' })
 }
 
+/**
+ * QQ 单聊/群聊消息发送器（WS 与 Webhook 两桥共用）：
+ * - 单聊：流式（stream_messages，input_state 1→10，replace 全量正文），「正在处理…」就地增长；
+ * - 群聊：平台不支持流式参数，定稿时一次发出（msg_id 被动回复）。
+ */
+class QqMessageSender {
+  private c2cStreams = new Map<string, { index: number; streamMsgId: string }>()
+  private sent = new Set<string>()
+
+  constructor(private readonly rest: (method: string, path: string, body?: Record<string, unknown>) => Promise<unknown>) {}
+
+  /** 发送一帧；finish=false 为中间帧（单聊流式推进，群聊忽略），finish=true 定稿。 */
+  async send(frame: QqFrame, streamId: string, content: string, finish: boolean): Promise<void> {
+    if (frame.scene === 'c2c') {
+      await this.streamC2c(frame, streamId, content, finish)
+    } else if (finish) {
+      await this.sendGroupOnce(frame, streamId, content)
+    }
+  }
+
+  private async streamC2c(frame: QqFrame, streamId: string, content: string, finish: boolean): Promise<void> {
+    if (this.sent.has(streamId)) return // 已结束
+    const state = this.c2cStreams.get(streamId) ?? { index: 0, streamMsgId: '' }
+    const text = content.trim() === '' ? '…' : content.slice(0, 2000)
+    const body: Record<string, unknown> = {
+      input_mode: 'replace',
+      input_state: finish ? 10 : 1,
+      index: state.index,
+      content_type: 'markdown',
+      content_raw: text,
+      msg_id: frame.msgId,
+      msg_seq: 1,
+    }
+    if (state.streamMsgId !== '') body.stream_msg_id = state.streamMsgId
+    const result = (await this.rest(
+      'POST',
+      `/v2/users/${encodeURIComponent(frame.openid)}/stream_messages`,
+      body,
+    )) as { id?: string } | null
+    if (result?.id !== undefined) {
+      state.streamMsgId = result.id
+      state.index += 1
+      this.c2cStreams.set(streamId, state)
+      if (finish) this.sent.add(streamId)
+    } else {
+      // 失败：重置流状态，下一帧重新起流（replace 全量正文，前缀自洽）。
+      this.c2cStreams.delete(streamId)
+      if (finish) this.sent.add(streamId)
+    }
+  }
+
+  private async sendGroupOnce(frame: QqFrame, streamId: string, content: string): Promise<void> {
+    if (this.sent.has(streamId)) return
+    this.sent.add(streamId)
+    const text = content.trim() === '' ? '（空回复）' : content.slice(0, 2000)
+    const result = await this.rest(
+      'POST',
+      `/v2/groups/${encodeURIComponent(frame.openid)}/messages`,
+      { content: text, msg_type: 0, msg_id: frame.msgId },
+    )
+    if (result === null) this.sent.delete(streamId) // 失败允许重试
+  }
+
+  clear(): void {
+    this.c2cStreams.clear()
+    this.sent.clear()
+  }
+}
+
 interface GatewayPayload {
   op: number
   d?: unknown
@@ -62,8 +131,8 @@ export class QQBridge {
   private accessToken: string | null = null
   /** access_token 过期时间戳（官方 ≤7200s；实测可能更短，提前 60s 刷新）。 */
   private tokenExpiresAt = 0
-  /** streamId → 已发出（单条定稿消息，防重复发送）。 */
-  private sent = new Set<string>()
+  /** 单聊流式/群聊定稿发送器。 */
+  private sender: QqMessageSender
   private recentMsgIds = new Set<string>()
   status: BridgeStatus = { state: 'idle', detail: '', connectedAt: null }
 
@@ -71,7 +140,9 @@ export class QQBridge {
     private readonly appId: string,
     private readonly secret: string,
     private readonly callbacks: QQBridgeCallbacks,
-  ) {}
+  ) {
+    this.sender = new QqMessageSender((method, path, body) => this.rest(method, path, body))
+  }
 
   private setStatus(state: BridgeStatus['state'], detail = ''): void {
     this.status = { state, detail, connectedAt: state === 'connected' ? Date.now() : this.status.connectedAt }
@@ -309,10 +380,9 @@ export class QQBridge {
     if (openid === '') return
     const frame: QqFrame = { openid, msgId, scene }
     const sink: ReplySink = {
-      // 单聊/群聊回复不支持就地编辑（群聊明确不支持流式），ack 关闭：
-      // 只发一条最终消息，避免「正在处理… + 回复」两条。
-      ack: false,
-      stream: (f, sid, content, finish) => void this.streamReply(f as QqFrame, sid, content, finish),
+      // 单聊：流式（ack 开启，「正在处理…」就地增长）；群聊：不支持流式，关闭 ack 只发定稿。
+      ack: false, // 单聊流式用 replace 全量正文，不能先发独立回执（前缀不一致会 40007）；群聊本就不支持流式。
+      stream: (f, sid, content, finish) => void this.sender.send(f as QqFrame, sid, content, finish),
     }
     const identity: ChatIdentity = {
       key: scene === 'c2c' ? `qq:c2c:${openid}` : `qq:group:${openid}`,
@@ -324,25 +394,11 @@ export class QQBridge {
     this.callbacks.onText(text, identity)
   }
 
-  /** 回复：finish 时一次发出（带 msg_id 被动回复；幂等防重发）。 */
-  private async streamReply(frame: QqFrame, streamId: string, content: string, finish: boolean): Promise<void> {
-    if (!finish) return
-    if (this.sent.has(streamId)) return
-    this.sent.add(streamId)
-    const text = content.trim() === '' ? '（空回复）' : content.slice(0, 2000)
-    const path =
-      frame.scene === 'c2c'
-        ? `/v2/users/${encodeURIComponent(frame.openid)}/messages`
-        : `/v2/groups/${encodeURIComponent(frame.openid)}/messages`
-    const result = await this.rest('POST', path, { content: text, msg_type: 0, msg_id: frame.msgId })
-    if (result === null) this.sent.delete(streamId) // 失败允许重试
-  }
-
   /** 停止网关连接。 */
   stop(): void {
     this.stopped = true
     this.clearHeartbeat()
-    this.sent.clear()
+    this.sender.clear()
     this.recentMsgIds.clear()
     this.ws?.close()
     this.ws = null
@@ -363,6 +419,7 @@ export class QQBridge {
  */
 export class QqWebhookBridge {
   private readonly key: KeyObject
+  private readonly sender: QqMessageSender
   private accessToken: string | null = null
   private tokenExpiresAt = 0
   private recentMsgIds = new Set<string>()
@@ -374,6 +431,7 @@ export class QqWebhookBridge {
     private readonly callbacks: { onText(text: string, identity: ChatIdentity): void },
   ) {
     this.key = qqEd25519Key(callbackToken)
+    this.sender = new QqMessageSender((method, path, body) => this.rest(method, path, body))
   }
 
   /** op 13 回调地址验证握手 → { plain_token, signature }（供控制台校验通过）。 */
@@ -423,10 +481,9 @@ export class QqWebhookBridge {
     if (openid === '') return true
     const frame: QqFrame = { openid, msgId, scene }
     const sink: ReplySink = {
-      ack: false,
-      stream: (_f, _sid, content, finish) => {
-        if (finish) void this.reply(frame, content)
-      },
+      // 单聊：流式（ack 开启）；群聊：只发定稿。
+      ack: false, // 单聊流式用 replace 全量正文，不能先发独立回执（前缀不一致会 40007）；群聊本就不支持流式。
+      stream: (f, sid, content, finish) => void this.sender.send(f as QqFrame, sid, content, finish),
     }
     const identity: ChatIdentity = {
       key: scene === 'c2c' ? `qq:c2c:${openid}` : `qq:group:${openid}`,
@@ -467,30 +524,25 @@ export class QqWebhookBridge {
     }
   }
 
-  /** 发送单聊/群聊消息（带 msg_id 被动回复，幂等由调用方保证）。 */
-  async reply(frame: QqFrame, content: string): Promise<boolean> {
-    if (!(await this.ensureToken())) return false
-    const text = content.trim() === '' ? '（空回复）' : content.slice(0, 2000)
-    const path =
-      frame.scene === 'c2c'
-        ? `/v2/users/${encodeURIComponent(frame.openid)}/messages`
-        : `/v2/groups/${encodeURIComponent(frame.openid)}/messages`
+  /** 发送器用的 rest：先确保 token，再打 /v2 接口。 */
+  private async rest(method: string, path: string, body?: Record<string, unknown>): Promise<unknown> {
+    if (!(await this.ensureToken())) return null
     try {
       const response = await fetch(`${BASE}${path}`, {
-        method: 'POST',
+        method,
         headers: { authorization: `QQBot ${this.accessToken ?? ''}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ content: text, msg_type: 0, msg_id: frame.msgId }),
+        body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(15_000),
       })
       if (!response.ok) {
         const err = (await response.text()).slice(0, 120)
-        console.warn('[dsh-message-gateway] qq webhook reply', response.status, err)
-        return false
+        console.warn('[dsh-message-gateway] qq webhook rest', method, path, response.status, err)
+        return null
       }
-      return true
+      return (await response.json()) as unknown
     } catch (error) {
-      console.warn('[dsh-message-gateway] qq webhook reply failed', String(error))
-      return false
+      console.warn('[dsh-message-gateway] qq webhook rest failed', method, path, String(error))
+      return null
     }
   }
 }

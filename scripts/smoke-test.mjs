@@ -239,7 +239,7 @@ globalThis.fetch = async (url, init) => {
   if (u.includes('/gateway')) {
     return { ok: true, json: async () => ({ url: 'wss://mock.qq/websocket' }) }
   }
-  if (u.includes('/messages')) {
+  if (u.includes('messages')) {
     qqRest.push({ method: init.method, url: u, body: JSON.parse(init.body) })
     return { ok: true, json: async () => ({ id: 'qq-msg-1' }) }
   }
@@ -284,18 +284,19 @@ check('单聊聊天类型', c2c?.identity.chatType === 'single')
 check('收到群@消息', grp?.text === '群你好')
 check('群聊聊天类型', grp?.identity.chatType === 'group')
 check(
-  '单聊回复走 /v2/users/{openid}/messages 带 msg_id',
-  qqRest.some((r) => r.url.includes('/v2/users/o1/messages') && r.body?.msg_id === 'c2c-m1'),
+  '单聊回复走 stream_messages 流式（定稿 input_state=10）',
+  qqRest.some((r) => r.url.includes('/v2/users/o1/stream_messages') && r.body?.input_state === 10 && r.body?.content_raw?.includes('QQ回复（定稿）')),
 )
 check(
   '群聊回复走 /v2/groups/{group_openid}/messages 带 msg_id',
   qqRest.some((r) => r.url.includes('/v2/groups/g1/messages') && r.body?.msg_id === 'g-m1' && r.body?.content?.includes('QQ回复（定稿）')),
 )
 check(
-  '中间帧（finish=false）不发送，只发定稿',
-  qqRest.every((r) => r.body?.content?.includes('（定稿）')),
-  `qqRest=${qqRest.length}`,
+  '单聊流式：中间帧 input_state=1 + 定稿 input_state=10',
+  qqRest.some((r) => r.url.includes('/stream_messages') && r.body?.input_state === 1 && r.body?.content_raw === 'QQ回复') &&
+    qqRest.some((r) => r.url.includes('/stream_messages') && r.body?.input_state === 10),
 )
+check('群聊只发定稿（无中间帧）', qqRest.filter((r) => r.url.includes('/groups/')).every((r) => r.body?.content?.includes('（定稿）')))
 qb.stop()
 
 // ---------- 7.5 QQ Webhook（回调）桥 ----------
@@ -327,8 +328,8 @@ qqWh.handleEvent({ t: 'C2C_MESSAGE_CREATE', d: { id: 'wh-m1', author: { user_ope
 await new Promise((r) => setTimeout(r, 50))
 check('Webhook 事件入管线（单聊 key）', qqReceivedAll.some((x) => x.identity.key === 'qq:c2c:o9' && x.text === '回调你好'))
 check(
-  'Webhook 回复走 /v2/users/{openid}/messages 带 msg_id',
-  qqRest.some((r) => r.url.includes('/v2/users/o9/messages') && r.body?.msg_id === 'wh-m1' && r.body?.content?.includes('回调回复（定稿）')),
+  'Webhook 单聊回复走 stream_messages 流式（定稿）',
+  qqRest.some((r) => r.url.includes('/v2/users/o9/stream_messages') && r.body?.input_state === 10 && r.body?.content_raw?.includes('回调回复（定稿）')),
 )
 check('未知事件类型忽略', qqWh.handleEvent({ t: 'GUILD_CREATE', d: {} }) === false)
 
