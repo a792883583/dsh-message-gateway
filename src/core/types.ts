@@ -27,7 +27,7 @@ export interface PlatformDef {
 }
 
 /** 平台连接状态。 */
-export type PlatformState = 'none' | 'connected' | 'error' | 'manual'
+export type PlatformState = 'none' | 'connecting' | 'connected' | 'error' | 'manual'
 
 /** 平台状态视图（不含凭据明文）。 */
 export interface PlatformStatus {

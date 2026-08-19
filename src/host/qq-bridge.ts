@@ -1,8 +1,11 @@
 /**
- * QQ 机器人桥（QQ 开放平台 / 频道与群）：appId+secret → access_token → WebSocket 网关。
- * 无第三方依赖（Node fetch + 原生 WebSocket）。消息事件经统一管线回复。
- * 流式体验：首次按被动回复发送（带 msg_id），随后 PATCH 渐进更新（限频）。
- * 注意：被动回复需在收到消息后尽快发送（超时会话过期则需主动消息能力）。
+ * QQ 机器人桥（开放平台 API v2，单聊/群聊）：appId+secret → access_token → WSS 长连接。
+ * 协议要点（官方文档）：
+ * - 网关地址：GET https://api.bot.qq.com/gateway → { url: 'wss://api.sgroup.qq.com/websocket' }
+ * - 鉴权：Identify 的 token 格式为 `QQBot {access_token}`，intents 1<<25（GROUP_AND_C2C_EVENT）
+ * - 事件：C2C_MESSAGE_CREATE（单聊）/ GROUP_AT_MESSAGE_CREATE（群@，content 已去 @前缀）
+ * - 回复：POST /v2/users/{user_openid}/messages（单聊）/ /v2/groups/{group_openid}/messages（群聊），
+ *   带 msg_id 被动回复；群聊不支持流式参数，故整条回复一次发出。
  * @module dsh-message-gateway/host/qq-bridge
  */
 
@@ -15,14 +18,19 @@ export interface QQBridgeCallbacks {
 }
 
 const TOKEN_URL = 'https://bots.qq.com/app/getAppAccessToken'
-const REST = 'https://api.sgroup.qq.com'
-const GATEWAY = 'wss://api.sgroup.qq.com/?v=1&encoding=json'
+const BASE = 'https://api.bot.qq.com'
+/** 事件订阅：GROUP_AND_C2C_EVENT = 1<<25（覆盖 C2C_MESSAGE_CREATE 与 GROUP_AT_MESSAGE_CREATE）。 */
+const INTENTS = 1 << 25
 
-/** GUILD_MESSAGES | DIRECT_MESSAGE | PUBLIC_GUILD_MESSAGES。 */
-const INTENTS = (1 << 9) | (1 << 12) | (1 << 30)
+/** 被动消息 msg_id 去重窗口（官方提示相同 msg_id 可能重复推送）。 */
+const DEDUP_CAP = 64
 
-const EDIT_INTERVAL_MS = 1200
-const MSG_LIMIT = 2000
+/** 回复帧：单聊=user_openid，群聊=group_openid。 */
+export interface QqFrame {
+  openid: string
+  msgId: string
+  scene: 'c2c' | 'group'
+}
 
 interface GatewayPayload {
   op: number
@@ -37,11 +45,9 @@ export class QQBridge {
   private heartbeat: ReturnType<typeof setInterval> | null = null
   private seq: number | null = null
   private accessToken: string | null = null
-  /** streamId → 已发送消息（用于渐进编辑）。 */
-  private streams = new Map<string, { channelId: string; messageId: string; lastEdit: number }>()
-  /** streamId → 最新待推送内容（流式合并，单 worker 消费）。 */
-  private state = new Map<string, { content: string; finish: boolean }>()
-  private working = new Set<string>()
+  /** streamId → 已发出（单条定稿消息，防重复发送）。 */
+  private sent = new Set<string>()
+  private recentMsgIds = new Set<string>()
   status: BridgeStatus = { state: 'idle', detail: '', connectedAt: null }
 
   constructor(
@@ -55,12 +61,12 @@ export class QQBridge {
     this.callbacks.onStatus(this.status)
   }
 
-  /** 启动：先取 access_token，再连网关。 */
+  /** 启动：先取 access_token，再取 WSS 接入点，最后连网关。 */
   start(): void {
     if (!this.stopped && this.ws !== null) return
     this.stopped = false
     this.setStatus('connecting', 'access token')
-    void this.getAccessToken().then((token) => {
+    void this.getAccessToken().then(async (token) => {
       if (this.stopped) return
       if (token === null) {
         this.setStatus('error', 'access token failed')
@@ -68,7 +74,13 @@ export class QQBridge {
       }
       this.accessToken = token
       this.setStatus('connecting', 'gateway')
-      this.connect()
+      const url = await this.getGatewayUrl()
+      if (this.stopped) return
+      if (url === null) {
+        this.setStatus('error', 'gateway url failed')
+        return
+      }
+      this.connect(url)
     })
   }
 
@@ -96,18 +108,43 @@ export class QQBridge {
     }
   }
 
-  private connect(): void {
+  /** 获取通用 WSS 接入点（官方推荐先调接口拿地址，避免写死）。 */
+  private async getGatewayUrl(): Promise<string | null> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 15_000)
+    try {
+      const response = await fetch(`${BASE}/gateway`, {
+        headers: { authorization: `QQBot ${this.accessToken ?? ''}` },
+        signal: controller.signal,
+      })
+      if (!response.ok) {
+        console.warn('[dsh-message-gateway] qq gateway url', response.status)
+        return null
+      }
+      const body = (await response.json()) as { url?: string }
+      if (typeof body.url === 'string' && body.url !== '') return body.url
+      console.warn('[dsh-message-gateway] qq gateway url missing', JSON.stringify(body).slice(0, 120))
+      return null
+    } catch (error) {
+      console.warn('[dsh-message-gateway] qq gateway url error', String(error))
+      return null
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  private connect(url: string): void {
     if (this.stopped) return
     let ws: WebSocket
     try {
-      ws = new WebSocket(GATEWAY)
+      ws = new WebSocket(url)
     } catch (error) {
       console.error('[dsh-message-gateway] qq ws create failed', error)
       this.setStatus('error', 'ws create failed')
       return
     }
     this.ws = ws
-    ws.onopen = () => console.log('[dsh-message-gateway] qq gateway open')
+    ws.onopen = () => console.log('[dsh-message-gateway] qq gateway open', url)
     ws.onmessage = (event) => this.onMessage(String(event.data))
     ws.onerror = () => console.warn('[dsh-message-gateway] qq gateway ws error')
     ws.onclose = () => {
@@ -115,7 +152,13 @@ export class QQBridge {
       this.ws = null
       if (!this.stopped) {
         console.warn('[dsh-message-gateway] qq gateway closed, reconnect in 3s')
-        setTimeout(() => this.connect(), 3000)
+        setTimeout(() => {
+          if (this.stopped) return
+          void this.getGatewayUrl().then((u) => {
+            if (this.stopped || u === null) return
+            this.connect(u)
+          })
+        }, 3000)
       }
     }
   }
@@ -135,7 +178,7 @@ export class QQBridge {
         this.identify()
         break
       }
-      case 1: {
+      case 1: { // Heartbeat 请求 → 回 seq
         this.sendOp(1, this.seq)
         break
       }
@@ -143,15 +186,24 @@ export class QQBridge {
         if (payload.t === 'READY') {
           this.setStatus('connected', 'qq')
           console.log('[dsh-message-gateway] qq READY')
-        } else if (payload.t === 'MESSAGE_CREATE' || payload.t === 'DIRECT_MESSAGE_CREATE') {
-          this.handleMessage(payload.d as Record<string, unknown>)
+        } else if (payload.t === 'C2C_MESSAGE_CREATE') {
+          this.handleMessage(payload.d as Record<string, unknown>, 'c2c')
+        } else if (payload.t === 'GROUP_AT_MESSAGE_CREATE') {
+          this.handleMessage(payload.d as Record<string, unknown>, 'group')
         }
         break
       }
-      case 7: {
+      case 9: { // INVALID_SESSION：日志后由 onclose 重连
+        console.warn('[dsh-message-gateway] qq identify rejected (INVALID_SESSION) — 请确认控制台事件订阅为 WebSocket 长连接')
         this.ws?.close()
         break
       }
+      case 7: { // RECONNECT
+        this.ws?.close()
+        break
+      }
+      case 11: // Heartbeat ACK，无操作
+        break
     }
   }
 
@@ -162,7 +214,7 @@ export class QQBridge {
 
   private identify(): void {
     this.sendOp(2, {
-      token: this.accessToken,
+      token: `QQBot ${this.accessToken ?? ''}`,
       intents: INTENTS,
       shard: [0, 1],
     })
@@ -185,20 +237,21 @@ export class QQBridge {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 15_000)
     try {
-      const response = await fetch(`${REST}${path}`, {
+      const response = await fetch(`${BASE}${path}`, {
         method,
         headers: {
-          authorization: `Bot ${this.accessToken ?? ''}`,
+          authorization: `QQBot ${this.accessToken ?? ''}`,
           'content-type': 'application/json',
         },
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
       })
       if (!response.ok) {
-        console.warn('[dsh-message-gateway] qq rest', method, path, response.status)
+        const text = (await response.text()).slice(0, 200)
+        console.warn('[dsh-message-gateway] qq rest', method, path, response.status, text)
         return null
       }
-      return await response.json() as unknown
+      return (await response.json()) as unknown
     } catch (error) {
       console.warn('[dsh-message-gateway] qq rest failed', method, path, String(error))
       return null
@@ -207,73 +260,60 @@ export class QQBridge {
     }
   }
 
-  private handleMessage(d: Record<string, unknown>): void {
-    const author = d.author as { id?: string; bot?: boolean } | undefined
+  /** 单聊/群聊消息分发（content 群聊已去 @前缀）。 */
+  private handleMessage(d: Record<string, unknown>, scene: 'c2c' | 'group'): void {
+    const author = d.author as { bot?: boolean; user_openid?: string; member_openid?: string } | undefined
     if (author?.bot === true) return
     const text = typeof d.content === 'string' ? d.content.trim() : ''
     if (text === '') return
-    const channelId = String(d.channel_id ?? '')
-    if (channelId === '') return
-    const guildId = String(d.guild_id ?? '')
-    const frame = { channelId, messageId: String(d.id ?? ''), guildId }
+    const msgId = String(d.id ?? '')
+    if (msgId === '') return
+    // 官方提示：相同 msg_id 可能重复推送，去重。
+    if (this.recentMsgIds.has(msgId)) return
+    this.recentMsgIds.add(msgId)
+    if (this.recentMsgIds.size > DEDUP_CAP) {
+      const first = this.recentMsgIds.values().next().value
+      if (first !== undefined) this.recentMsgIds.delete(first)
+    }
+    const openid = scene === 'c2c' ? (author?.user_openid ?? '') : String(d.group_openid ?? '')
+    if (openid === '') return
+    const frame: QqFrame = { openid, msgId, scene }
     const sink: ReplySink = {
-      stream: (f, sid, content, finish) => void this.streamReply(f as typeof frame, sid, content, finish),
+      // 单聊/群聊回复不支持就地编辑（群聊明确不支持流式），ack 关闭：
+      // 只发一条最终消息，避免「正在处理… + 回复」两条。
+      ack: false,
+      stream: (f, sid, content, finish) => void this.streamReply(f as QqFrame, sid, content, finish),
     }
     const identity: ChatIdentity = {
-      key: `qq:${channelId}`,
+      key: scene === 'c2c' ? `qq:c2c:${openid}` : `qq:group:${openid}`,
       frame,
       sink,
-      chatType: guildId === '' ? 'single' : 'group',
+      chatType: scene === 'c2c' ? 'single' : 'group',
     }
-    console.log('[dsh-message-gateway] qq text', { channelId, text: text.slice(0, 60) })
+    console.log('[dsh-message-gateway] qq text', { scene, openid, text: text.slice(0, 60) })
     this.callbacks.onText(text, identity)
   }
 
-  /** 流式回复：状态合并 + 单 worker——首次被动回复，随后 PATCH 渐进更新（限频）。 */
-  private async streamReply(frame: { channelId: string; messageId: string }, streamId: string, content: string, finish: boolean): Promise<void> {
-    const prev = this.state.get(streamId)
-    this.state.set(streamId, { content, finish: finish || (prev?.finish ?? false) })
-    if (this.working.has(streamId)) return
-    this.working.add(streamId)
-    try {
-      for (let guard = 0; guard < 200; guard += 1) {
-        const current = this.state.get(streamId)
-        if (current === undefined) break
-        const text = (current.content === '' ? ' ' : current.content).slice(0, MSG_LIMIT)
-        const existing = this.streams.get(streamId)
-        if (existing === undefined) {
-          if (current.content === '' && !current.finish) break
-          // 首次：被动回复（带 msg_id），2 分钟内有效。
-          const result = (await this.rest('POST', `/channels/${frame.channelId}/messages`, {
-            content: text,
-            msg_type: 0,
-            msg_id: frame.messageId,
-          })) as { id?: string } | null
-          if (result?.id === undefined) break
-          this.streams.set(streamId, { channelId: frame.channelId, messageId: result.id, lastEdit: Date.now() })
-          if (current.finish || this.state.get(streamId)!.content === current.content) break
-          continue
-        }
-        const wait = EDIT_INTERVAL_MS - (Date.now() - existing.lastEdit)
-        if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
-        existing.lastEdit = Date.now()
-        await this.rest('PATCH', `/channels/${existing.channelId}/messages/${existing.messageId}`, { content: text })
-        if (current.finish || this.state.get(streamId)!.content === current.content) break
-      }
-    } catch (error) {
-      console.error('[dsh-message-gateway] qq reply failed', error)
-    } finally {
-      this.working.delete(streamId)
-    }
+  /** 回复：finish 时一次发出（带 msg_id 被动回复；幂等防重发）。 */
+  private async streamReply(frame: QqFrame, streamId: string, content: string, finish: boolean): Promise<void> {
+    if (!finish) return
+    if (this.sent.has(streamId)) return
+    this.sent.add(streamId)
+    const text = content.trim() === '' ? '（空回复）' : content.slice(0, 2000)
+    const path =
+      frame.scene === 'c2c'
+        ? `/v2/users/${encodeURIComponent(frame.openid)}/messages`
+        : `/v2/groups/${encodeURIComponent(frame.openid)}/messages`
+    const result = await this.rest('POST', path, { content: text, msg_type: 0, msg_id: frame.msgId })
+    if (result === null) this.sent.delete(streamId) // 失败允许重试
   }
 
   /** 停止网关连接。 */
   stop(): void {
     this.stopped = true
     this.clearHeartbeat()
-    this.streams.clear()
-    this.state.clear()
-    this.working.clear()
+    this.sent.clear()
+    this.recentMsgIds.clear()
     this.ws?.close()
     this.ws = null
     this.accessToken = null

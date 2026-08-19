@@ -592,7 +592,8 @@ export class BridgeManager {
       return { state: 'error', detail: live.detail, testedAt: stored?.testedAt ?? null }
     }
     if (live.state === 'connecting') {
-      return { state: stored?.state ?? 'none', detail: '连接中…', testedAt: stored?.testedAt ?? null }
+      // 桥正在（重）连接时如实显示「连接中」，不要沿用存储的旧状态（否则出现"已连接 · 连接中"）。
+      return { state: 'connecting', detail: live.detail || '连接中…', testedAt: stored?.testedAt ?? null }
     }
     return stored ?? { state: 'none', detail: '', testedAt: null }
   }

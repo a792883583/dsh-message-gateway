@@ -227,7 +227,7 @@ check('机器人消息被忽略', (() => {
 db.stop()
 
 // ---------- 7. QQ 桥（mock 令牌端点 + 网关） ----------
-console.log('\n[7] QQ 桥')
+console.log('\n[7] QQ 桥（单聊/群聊 v2 协议）')
 import { QQBridge } from '../lib/index.js'
 MockWebSocket.instances.length = 0
 const qqRest = []
@@ -236,40 +236,66 @@ globalThis.fetch = async (url, init) => {
   if (u.includes('getAppAccessToken')) {
     return { ok: true, json: async () => ({ access_token: 'FAKE_QQ_TOKEN', expires_in: 7200 }) }
   }
+  if (u.includes('/gateway')) {
+    return { ok: true, json: async () => ({ url: 'wss://mock.qq/websocket' }) }
+  }
   if (u.includes('/messages')) {
-    qqRest.push({ method: init.method, body: JSON.parse(init.body) })
+    qqRest.push({ method: init.method, url: u, body: JSON.parse(init.body) })
     return { ok: true, json: async () => ({ id: 'qq-msg-1' }) }
   }
   return { ok: false, json: async () => ({}) }
 }
-let qqReceived = null
+let qqReceivedAll = []
+let qqSeq = 0
 const qb = new QQBridge('FAKE_APP_ID', 'FAKE_SECRET', {
   onStatus: () => {},
   onText: (text, identity) => {
-    qqReceived = { text, identity }
-    identity.sink.stream(identity.frame, 'q1', 'QQ回复', false)
-    identity.sink.stream(identity.frame, 'q1', 'QQ回复（更新）', true)
+    qqReceivedAll.push({ text, identity })
+    // 中间帧（finish=false）不发送；定稿帧（finish=true）发送一次。
+    const sid = `q${++qqSeq}`
+    identity.sink.stream(identity.frame, sid, 'QQ回复', false)
+    identity.sink.stream(identity.frame, sid, 'QQ回复（定稿）', true)
   },
 })
 qb.start()
 await new Promise((r) => setTimeout(r, 100))
 const qws = MockWebSocket.instances[0]
-check('已获取 access_token 并连网关', qws !== undefined)
+check('已获取 access_token 并连网关', qws !== undefined && qws.url === 'wss://mock.qq/websocket')
 qws?.emit({ op: 10, d: { heartbeat_interval: 30000 } })
 await new Promise((r) => setTimeout(r, 50))
-check('IDENTIFY 含 access token 与 intents', qws?.sent.some(p => p.op === 2 && p.d.token === 'FAKE_QQ_TOKEN' && typeof p.d.intents === 'number'))
+check(
+  'IDENTIFY 含 QQBot token 与 C2C/群 intents',
+  qws?.sent.some((p) => p.op === 2 && p.d.token === 'QQBot FAKE_QQ_TOKEN' && p.d.intents === (1 << 25)),
+)
 qws?.emit({ op: 0, t: 'READY', s: 1, d: {} })
 qws?.emit({
-  op: 0, t: 'MESSAGE_CREATE', s: 2,
-  d: { id: 'qq-m1', channel_id: '789', guild_id: 'g1', author: { id: 'u9', bot: false }, content: 'QQ 你好' },
+  op: 0, t: 'C2C_MESSAGE_CREATE', s: 2,
+  d: { id: 'c2c-m1', author: { user_openid: 'o1', bot: false }, content: '单聊你好' },
+})
+qws?.emit({
+  op: 0, t: 'GROUP_AT_MESSAGE_CREATE', s: 3,
+  d: { id: 'g-m1', group_openid: 'g1', author: { member_openid: 'm1', bot: false }, content: '群你好' },
 })
 await new Promise((r) => setTimeout(r, 150))
-check('收到群消息', qqReceived !== null)
-check('聊天键为 qq:789', qqReceived?.identity.key === 'qq:789')
-check('群聊类型', qqReceived?.identity.chatType === 'group')
-check('被动回复带 msg_id', qqRest.some(r => r.method === 'POST' && r.body.msg_id === 'qq-m1' && r.body.content.includes('QQ回复')))
-await new Promise((r) => setTimeout(r, 1400))
-check('PATCH 渐进更新', qqRest.some(r => r.method === 'PATCH' && r.body.content.includes('（更新）')))
+const c2c = qqReceivedAll.find((x) => x.identity.key === 'qq:c2c:o1')
+const grp = qqReceivedAll.find((x) => x.identity.key === 'qq:group:g1')
+check('收到单聊消息', c2c !== undefined && c2c?.text === '单聊你好')
+check('单聊聊天类型', c2c?.identity.chatType === 'single')
+check('收到群@消息', grp?.text === '群你好')
+check('群聊聊天类型', grp?.identity.chatType === 'group')
+check(
+  '单聊回复走 /v2/users/{openid}/messages 带 msg_id',
+  qqRest.some((r) => r.url.includes('/v2/users/o1/messages') && r.body?.msg_id === 'c2c-m1'),
+)
+check(
+  '群聊回复走 /v2/groups/{group_openid}/messages 带 msg_id',
+  qqRest.some((r) => r.url.includes('/v2/groups/g1/messages') && r.body?.msg_id === 'g-m1' && r.body?.content?.includes('QQ回复（定稿）')),
+)
+check(
+  '中间帧（finish=false）不发送，只发定稿',
+  qqRest.every((r) => r.body?.content?.includes('（定稿）')),
+  `qqRest=${qqRest.length}`,
+)
 qb.stop()
 
 // ---------- 8. 回调型平台桥（企业微信应用 / 公众号 / WhatsApp） ----------
