@@ -1,0 +1,5 @@
+# dsh-message-gateway — DSH web GUI message-platform gateway bundle.
+# Registered by `dsh plugin --profile web add link:<path>` (or npm once published).
+- insert:
+    - id: ui-message-gateway
+      name: 'dsh-message-gateway'
