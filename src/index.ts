@@ -16,7 +16,7 @@ import { registerGatewayRoutes } from './host/routes.ts'
 import { Config, type GatewayConfig } from './core/config.ts'
 import { TelegramBridge } from './host/telegram-bridge.ts'
 import { DiscordBridge } from './host/discord-bridge.ts'
-import { QQBridge } from './host/qq-bridge.ts'
+import { QQBridge, QqWebhookBridge } from './host/qq-bridge.ts'
 import { EmailBridge, ImapClient, SmtpClient, headerField, parseAddress, cleanBody } from './host/email-bridge.ts'
 import { WecomBridge } from './host/wecom-bridge.ts'
 import { WecomAppBridge, WechatMpBridge, WhatsappBridge, sha1Sorted, xmlField, xmlEncrypt } from './host/callback-bridges.ts'
@@ -31,7 +31,7 @@ export { Config }
 
 /** 供宿主嵌入/测试使用的内部类与平台表。 */
 export {
-  BridgeManager, TelegramBridge, DiscordBridge, QQBridge, WecomBridge, EmailBridge, ImapClient, SmtpClient,
+  BridgeManager, TelegramBridge, DiscordBridge, QQBridge, QqWebhookBridge, WecomBridge, EmailBridge, ImapClient, SmtpClient,
   headerField, parseAddress, cleanBody,
   WecomAppBridge, WechatMpBridge, WhatsappBridge,
   sha1Sorted, xmlField, xmlEncrypt, CALLBACK_PATHS,

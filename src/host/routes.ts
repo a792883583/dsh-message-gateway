@@ -13,6 +13,7 @@ import { loadStore, saveStore } from './gateway-store.ts'
 import type { BridgeManager } from './bridge-manager.ts'
 import { platformDef, PLATFORMS, testPlatform } from './platforms.ts'
 import { WecomAppBridge, WechatMpBridge, WhatsappBridge, xmlEncrypt, callbackIdentity } from './callback-bridges.ts'
+import { QqWebhookBridge } from './qq-bridge.ts'
 
 type Envelope<T> = { ok: true; value: T } | { ok: false; error: { code: string; message: string } }
 
@@ -23,6 +24,7 @@ export const CALLBACK_PATHS: Record<string, string> = {
   wecom: '/gateway/wecom/callback',
   'wechat-mp': '/gateway/wechat-mp/callback',
   whatsapp: '/gateway/whatsapp/webhook',
+  qq: '/gateway/qq/callback',
 }
 
 /** 读取请求体：返回原始文本（供 HMAC 签名校验）与解析后的 JSON。 */
@@ -218,6 +220,40 @@ async function handleCallbackRoute(
       json(res, { ok: true, value: null })
       return
     }
+    if (path === '/gateway/qq/callback') {
+      const cred = store.platforms.qq
+      if (cred === undefined || cred.callbackToken === '') {
+        json(res, { ok: false, error: { code: 'internal', message: 'qq callback not configured' } }, 400)
+        return
+      }
+      const bridge = new QqWebhookBridge(cred.appId ?? '', cred.secret ?? '', cred.callbackToken, {
+        onText: (text, identity) => void manager.handleExternalMessage(identity, text),
+      })
+      const { raw, json: payload } = await readJsonBody(req)
+      const body = (payload ?? {}) as { op?: number; d?: unknown; t?: unknown }
+      if (body.op === 13) {
+        // 回调地址验证握手：返回 plain_token + ed25519 签名（裸 JSON，非 Envelope）。
+        const validated = bridge.validate((body.d ?? {}) as { plain_token?: unknown; event_ts?: unknown })
+        if (validated === null) {
+          json(res, { ok: false, error: { code: 'internal', message: 'bad validation payload' } }, 400)
+          return
+        }
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify(validated))
+        return
+      }
+      // 事件推送：验签（X-Signature-Ed25519 / X-Signature-Timestamp + 原始 body）。
+      const signature = req.headers['x-signature-ed25519']
+      const timestamp = req.headers['x-signature-timestamp']
+      if (typeof signature !== 'string' || typeof timestamp !== 'string' || !bridge.verifySignature(raw, signature, timestamp)) {
+        json(res, { ok: false, error: { code: 'internal', message: 'signature mismatch' } }, 403)
+        return
+      }
+      bridge.handleEvent(body)
+      // 立即 200：回复经被动消息 API 异步送达。
+      json(res, { ok: true, value: null })
+      return
+    }
     json(res, { ok: false, error: { code: 'internal', message: 'unknown callback route' } }, 404)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -253,7 +289,8 @@ export function registerGatewayRoutes(ctx: Context, manager: BridgeManager): () 
       if (
         path === '/gateway/wecom/callback' ||
         path === '/gateway/wechat-mp/callback' ||
-        path === '/gateway/whatsapp/webhook'
+        path === '/gateway/whatsapp/webhook' ||
+        path === '/gateway/qq/callback'
       ) {
         await handleCallbackRoute(req, res, path, url.searchParams, manager)
         return

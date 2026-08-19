@@ -28,9 +28,11 @@ export const PLATFORMS: PlatformDef[] = [
     nameKey: 'platform.qq',
     icon: '💬',
     testable: true,
+    hintKey: 'platform.qq.hint',
     fields: [
       { key: 'appId', labelKey: 'field.appId', kind: 'text' },
       { key: 'secret', labelKey: 'field.secret', placeholderKey: 'field.secret.ph', kind: 'secret' },
+      { key: 'callbackToken', labelKey: 'field.qqCallbackToken', placeholderKey: 'field.secret.ph', kind: 'secret' },
     ],
   },
   {
