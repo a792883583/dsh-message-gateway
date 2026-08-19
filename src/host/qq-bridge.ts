@@ -151,26 +151,38 @@ export class QQBridge {
     this.callbacks.onStatus(this.status)
   }
 
-  /** 启动：先取 access_token，再取 WSS 接入点，最后连网关。 */
+  /** 启动：先取 access_token，再取 WSS 接入点，最后连网关；失败自动重试（退避）。 */
   start(): void {
     if (!this.stopped && this.ws !== null) return
     this.stopped = false
     this.setStatus('connecting', 'access token')
-    void this.getAccessToken().then(async (token) => {
+    void this.tryStart()
+  }
+
+  private async tryStart(): Promise<void> {
+    while (!this.stopped && this.ws === null) {
+      const token = await this.getAccessToken()
       if (this.stopped) return
       if (token === null) {
-        this.setStatus('error', 'access token failed')
-        return
+        const delay = Math.min(3000 * 2 ** this.reconnectAttempts, 60_000)
+        this.reconnectAttempts += 1
+        this.setStatus('connecting', `token retry ${delay}ms`)
+        await new Promise((resolve) => setTimeout(resolve, delay))
+        continue
       }
       this.setStatus('connecting', 'gateway')
       const url = await this.getGatewayUrl()
       if (this.stopped) return
       if (url === null) {
-        this.setStatus('error', 'gateway url failed')
-        return
+        const delay = Math.min(3000 * 2 ** this.reconnectAttempts, 60_000)
+        this.reconnectAttempts += 1
+        this.setStatus('connecting', `gateway retry ${delay}ms`)
+        await new Promise((resolve) => setTimeout(resolve, delay))
+        continue
       }
       this.connect(url)
-    })
+      return
+    }
   }
 
   private async getAccessToken(): Promise<string | null> {
