@@ -109,7 +109,7 @@ export class QQBridge {
     this.ws = ws
     ws.onopen = () => console.log('[dsh-message-gateway] qq gateway open')
     ws.onmessage = (event) => this.onMessage(String(event.data))
-    ws.onerror = () => ws.close()
+    ws.onerror = () => console.warn('[dsh-message-gateway] qq gateway ws error')
     ws.onclose = () => {
       this.clearHeartbeat()
       this.ws = null

@@ -73,7 +73,7 @@ export class DiscordBridge {
     this.ws = ws
     ws.onopen = () => console.log('[dsh-message-gateway] discord gateway open')
     ws.onmessage = (event) => this.onMessage(String(event.data))
-    ws.onerror = () => ws.close()
+    ws.onerror = () => console.warn('[dsh-message-gateway] discord gateway ws error')
     ws.onclose = () => {
       this.clearHeartbeat()
       this.ws = null
