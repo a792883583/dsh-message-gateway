@@ -40,9 +40,6 @@ A message-platform gateway plugin for the DSH Web GUI: a "Message platforms" ent
 ```sh
 # From npm (generic plugin, usable by any DSH user)
 dsh plugin --profile web add dsh-message-gateway
-
-# Or link for local development
-dsh plugin --profile web add link:/path/to/dsh-message-gateway
 ```
 
 Restart `dsh web` — the "Message platforms" button appears below "New session" in the sidebar. Open the page, pick a platform, fill in credentials and click **Save** — for the WeCom AI bot, saving `botId + secret` establishes the persistent bridge immediately and you can chat with the bot in WeCom right away (same as web: per-chat sessions + automatic context compression).

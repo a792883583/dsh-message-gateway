@@ -40,9 +40,6 @@ DSH Web GUI 的消息平台网关插件：在侧边栏「新会话」按钮下�
 ```sh
 # 从 npm 安装（通用插件，任何 DSH 用户可直接使用）
 dsh plugin --profile web add dsh-message-gateway
-
-# 或本地开发以链接方式安装
-dsh plugin --profile web add link:/path/to/dsh-message-gateway
 ```
 
 重启 `dsh web`，侧边栏「新会话」按钮下方即出现「消息平台」按钮。打开页面，选择平台、

@@ -40,9 +40,6 @@ Un plugin de pasarela de mensajería para la GUI web de DSH: una entrada "Plataf
 ```sh
 # Desde npm (plugin genérico, utilizable por cualquier usuario de DSH)
 dsh plugin --profile web add dsh-message-gateway
-
-# O enlazado para desarrollo local
-dsh plugin --profile web add link:/ruta/a/dsh-message-gateway
 ```
 
 Reinicie `dsh web`: el botón "Plataformas de mensajería" aparece debajo de "Nueva sesión" en la barra lateral. Abra la página, elija una plataforma, complete las credenciales y haga clic en **Guardar** — para el Bot de IA de WeCom, guardar `botId + secret` establece el puente persistente de inmediato y puede chatear con el bot en WeCom al momento (igual que en la web: sesiones por chat + compresión automática de contexto).
