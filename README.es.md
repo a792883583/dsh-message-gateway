@@ -22,6 +22,12 @@ Un plugin de pasarela de mensajería para la GUI web de DSH: una entrada "Plataf
   - **Comandos de barra**: `/help` / `/time` / `/status` (alias en chino: 帮助/菜单/时间/状态)
   - **Mensaje de bienvenida**: se responde automáticamente un saludo cuando un usuario entra a un chat individual por primera vez ese día
   - **Canal de envío proactivo**: `POST /gateway/send` (`{"chatid": "...", "content": "..."}`, chat individual = userid, grupo = id de grupo) envía mensajes markdown como el bot
+  - **Push proactivo universal**: `POST /gateway/push` (`{"platform": "...", "target": "...", "content": "...", "title": "opcional"}`) envía texto a cualquier plataforma para notificaciones de tareas / otros plugins:
+    - `platform` admite `telegram` (target = chatId numérico), `discord` (target = channelId), `wecom-aibot` (target = userid/id de grupo), `email` (target = correo, title como asunto)
+    - QQ no admite push activo desde el 2025-04-21 (solo respuestas pasivas); devuelve un error claro
+    - una plataforma no conectada devuelve `bridge not connected`
+  - **Reglas de enrutado de mensajes** (configuración del plugin `routes`): enruta mensajes por "plataforma + prefijo de palabra clave" a un **preset de agente** específico (sesión aislada) con un **modelo / skill** opcional. Ej.: `{ id: "code", matchPlatform: "telegram", matchPrefix: "code ", agentPreset: "code" }` hace que `code escribe una función` en Telegram entre en una sesión de preset code. Gana la primera regla que coincida; los mensajes sin coincidencia usan el agente por defecto
+  - **Comandos de barra**: `/help` / `/time` / `/status` / `/stats` (alias en chino: 帮助/菜单/时间/状态/统计); `/stats` muestra el estado de conexión de cada puente y el número de chats activos
 - **Endpoint de recepción de webhooks**: `POST /gateway/webhook/in` acepta mensajes de sistemas externos (cualquiera de `text` / `content` / `message`), los inyecta en la sesión de agente dedicada y devuelve la respuesta completa de forma síncrona; un secreto de firma HMAC-SHA256 opcional valida las peticiones (contrato: [docs/webhooks.md](docs/webhooks.md))
 - **Cuentas personales de WeChat (pasarela externa opcional)**: inicio de sesión por QR y sondeo de estado contra una pasarela HTTP Wechaty local (contrato: [docs/wechaty-gateway.md](docs/wechaty-gateway.md))
 - **Multilingüe**: chino / inglés / español, siguiendo el idioma de la interfaz web de DSH (los navegadores en español cambian automáticamente); por defecto chino simplificado

@@ -22,6 +22,12 @@ A message-platform gateway plugin for the DSH Web GUI: a "Message platforms" ent
   - **Slash commands**: `/help` / `/time` / `/status` (Chinese aliases: 帮助/菜单/时间/状态)
   - **Enter-chat welcome**: a welcome message is auto-replied when a user enters a single chat for the first time that day
   - **Proactive send channel**: `POST /gateway/send` (`{"chatid": "...", "content": "..."}`, single chat = userid, group chat = group id) sends markdown messages as the bot
+  - **Universal proactive push**: `POST /gateway/push` (`{"platform": "...", "target": "...", "content": "...", "title": "optional"}`) pushes text to any platform target for task notifications / other plugins:
+    - `platform` supports `telegram` (target = numeric chatId), `discord` (target = channelId), `wecom-aibot` (target = userid/group id), `email` (target = address, title becomes the subject)
+    - QQ has no active push since 2025-04-21 (passive replies only); calling it returns a clear error
+    - an unconnected platform returns `bridge not connected`
+  - **Message routing rules** (plugin config `routes`): route messages by "platform + keyword prefix" to a specific **agent preset** (isolated session) with an optional **dedicated model / skill**. E.g. `{ id: "code", matchPlatform: "telegram", matchPrefix: "code ", agentPreset: "code" }` makes `code write a function` on Telegram enter a code-preset session. First matching rule wins; unmatched messages use the default agent
+  - **Slash commands**: `/help` / `/time` / `/status` / `/stats` (Chinese aliases: 帮助/菜单/时间/状态/统计); `/stats` shows per-bridge connection status and active chat count
 - **Webhook receive endpoint**: `POST /gateway/webhook/in` accepts messages from external systems (any of `text` / `content` / `message`), injects them into the dedicated agent session and returns the full reply synchronously; an optional HMAC-SHA256 signing secret validates requests (contract: [docs/webhooks.md](docs/webhooks.md))
 - **WeChat personal accounts (optional external gateway)**: QR login and status polling against a local Wechaty HTTP gateway (contract: [docs/wechaty-gateway.md](docs/wechaty-gateway.md))
 - **Multilingual**: Chinese / English / Español, following the DSH Web UI language (Spanish browsers auto-switch); defaults to Simplified Chinese
