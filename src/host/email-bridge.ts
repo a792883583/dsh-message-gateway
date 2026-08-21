@@ -593,6 +593,23 @@ export class EmailBridge {
     }
   }
 
+  /** 主动推送：向任意收件人发送邮件（SMTP 配置复用桥凭据）。 */
+  async send(to: string, subject: string, content: string): Promise<boolean> {
+    try {
+      const smtpHost = this.cred.smtpHost ?? this.cred.imapHost
+      const smtpPort = Number(this.cred.smtpPort || '465')
+      const smtpUser = this.cred.smtpUser ?? this.cred.imapUser
+      const smtpPass = this.cred.smtpPass ?? this.cred.imapPass
+      const smtp = new SmtpClient(smtpHost, smtpPort, smtpUser, smtpPass, smtpUser)
+      const ok = await smtp.send(to, subject, content)
+      console.log('[dsh-message-gateway] email push sent', { to, subject: subject.slice(0, 40), ok })
+      return ok
+    } catch (error) {
+      console.error('[dsh-message-gateway] email push failed', error)
+      return false
+    }
+  }
+
   /** 停止轮询。 */
   stop(): void {
     this.stopped = true

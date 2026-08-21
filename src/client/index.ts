@@ -10,6 +10,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { GatewayApi } from './api.ts'
 import { initI18n, useT } from './i18n.ts'
 import { GatewayPage } from './Page.tsx'
+import { InboxIcon } from './icons.tsx'
 
 /** 注入的 client runtime 结构面孔。 */
 interface GatewayClientContext {
@@ -58,7 +59,7 @@ function GatewayApp(props: { api: GatewayApi }): React.ReactElement {
     createElement(
       'button',
       { type: 'button', className: 'dsh-gw-open', title: t('gateway.open'), onClick: () => setOpen(true) },
-      createElement('span', { className: 'icon' }, '📮'),
+      createElement('span', { className: 'icon' }, createElement(InboxIcon, { size: 16 })),
       createElement('span', { className: 'label' }, t('gateway.title')),
     ),
     open ? createElement(GatewayPage, { api, onClose: close }) : null,

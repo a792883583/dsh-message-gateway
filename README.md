@@ -22,6 +22,12 @@ DSH Web GUI 的消息平台网关插件：在侧边栏「新会话」按钮下�
   - **斜杠命令**：`/help` / `/time` / `/status`（含中文别名：帮助/菜单/时间/状态）
   - **进入会话欢迎语**：用户当天首次进入单聊时自动回复欢迎消息
   - **主动发送通道**：`POST /gateway/send`（`{"chatid": "...", "content": "..."}`，单聊=userid，群聊=群 ID）以机器人身份主动发送 markdown 消息
+  - **通用主动推送**：`POST /gateway/push`（`{"platform": "...", "target": "...", "content": "...", "title": "可选"}`）向任意平台目标推送文本，供定时任务通知 / 其他插件调用：
+    - `platform` 支持：`telegram`（target=chatId 数字）、`discord`（target=channelId）、`wecom-aibot`（target=userid/群ID）、`email`（target=收件地址，title 作邮件主题）
+    - QQ 平台官方已于 2025-04-21 取消主动推送，仅支持被动回复，调用会返回明确错误
+    - 未连接的平台返回 `bridge not connected`
+  - **消息路由规则**（插件配置 `routes`）：按「平台 + 关键词前缀」把消息路由到指定 **agent 预设**（独立会话）与可选**专用模型 / skill**。例如配置 `{ id: "code", matchPlatform: "telegram", matchPrefix: "code ", agentPreset: "code" }` 后，Telegram 里发 `code 帮我写个函数` 会进入 code 预设的独立会话。按顺序匹配第一条命中；未命中走默认 agent
+  - **斜杠命令**：`/help` / `/time` / `/status` / `/stats`（含中文别名：帮助/菜单/时间/状态/统计）；`/stats` 展示各平台桥连接状态与活跃会话数
 - **Webhook 接收端点**：`POST /gateway/webhook/in` 接收外部系统消息（`text` / `content` / `message` 任一字段），注入专用 agent 会话并同步返回完整回复；可配置 HMAC-SHA256 签名密钥校验（契约见 [docs/webhooks.md](docs/webhooks.md)）
 - **微信个人号（可选外部网关）**：对接本机 Wechaty HTTP 网关的扫码登录与状态轮询（契约见 [docs/wechaty-gateway.md](docs/wechaty-gateway.md)）
 - **多语言**：中文 / English / Español，自动跟随 DSH Web 界面语言（西班牙语浏览器自动切换），默认简体中文

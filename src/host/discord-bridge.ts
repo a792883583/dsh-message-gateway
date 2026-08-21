@@ -223,6 +223,19 @@ export class DiscordBridge {
     }
   }
 
+  /** 主动推送：向指定频道发送文本消息（不经回复管线）。 */
+  async send(channelId: string, content: string): Promise<boolean> {
+    try {
+      const result = (await this.rest('POST', `/channels/${encodeURIComponent(channelId)}/messages`, {
+        content: content.slice(0, MSG_LIMIT),
+      })) as { id?: string } | null
+      return result?.id !== undefined
+    } catch (error) {
+      console.error('[dsh-message-gateway] discord send failed', error)
+      return false
+    }
+  }
+
   /** 停止网关连接。 */
   stop(): void {
     this.stopped = true

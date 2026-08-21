@@ -150,6 +150,12 @@ export class TelegramBridge {
     }
   }
 
+  /** 主动推送：以机器人身份向指定 chat 发送文本（不经回复管线，无编辑）。 */
+  async send(chatId: number, content: string): Promise<boolean> {
+    const result = await this.sendText(chatId, content)
+    return result !== null
+  }
+
   /** 发送文本（Markdown 失败自动降级纯文本）。 */
   private async sendText(chatId: number, text: string): Promise<{ messageId: number } | null> {
     const body = { chat_id: chatId, text: text.slice(0, MSG_LIMIT), parse_mode: 'Markdown', disable_web_page_preview: true }

@@ -192,12 +192,13 @@ export class BridgeManager {
   }
 
   /** 创建/获取某聊天的独立 agent：独立会话 + 模型配置（默认跟随部署，可被 botModel 覆盖）。 */
-  private async ensureAgentForKey(key: string): Promise<Agent | null> {
-    const existing = this.agents.get(key)
+  private async ensureAgentForKey(key: string, route?: { agentPreset?: string; botModel?: { provider: string; model: string }; skill?: string }): Promise<Agent | null> {
+    // 路由专用会话键：路由不同则会话隔离（避免「code 路由」与「默认路由」串上下文）。
+    const sessionKey = route?.agentPreset !== undefined || route?.skill !== undefined ? `${key}::${route?.agentPreset ?? ''}#${route?.skill ?? ''}` : key
+    const existing = this.agents.get(sessionKey)
     if (existing !== undefined) return existing.agent
-    // 模型来源：优先插件配置 botModel（机器人专用快速模型），其次部署默认模型选择
-    // （agentDefaultModel，与 dsh-headless 同源），最后回退已注册根 agent 的配置。
-    const override = this.config.botModel
+    // 模型来源：路由专用模型 > 插件配置 botModel > 部署默认模型 > 根 agent。
+    const override = route?.botModel ?? this.config.botModel
     let selection: { provider: string; model: string } | undefined
     if (override !== undefined && override.provider !== '' && override.model !== '') {
       selection = { provider: override.provider, model: override.model }
@@ -239,15 +240,34 @@ export class BridgeManager {
         meta: { cwd: process.cwd(), origin: 'subagent' },
         setup: async (agentCtx) => {
           // 通用组合：挂载部署的默认 agent 预设（工具/提示词段/技能目录随预设而来），
-          // 不写死预设 id 或路径；无预设服务的部署自动退化为全局层。
+          // 路由指定预设时优先挂载路由预设；无预设服务的部署自动退化为全局层。
           const presets = (agentCtx as { get?: (name: string) => unknown }).get?.('agentPresets') as
             | { mount(agentCtx: unknown, id?: string): Promise<unknown> }
             | undefined
           if (presets !== undefined) {
             try {
-              await presets.mount(agentCtx)
+              await presets.mount(agentCtx, route?.agentPreset)
             } catch (error) {
               console.warn('[dsh-message-gateway] agent preset mount skipped', String(error))
+            }
+          }
+          // 路由指定 skill：挂载 skill 目录（若宿主提供）。
+          if (route?.skill !== undefined) {
+            const skills = (agentCtx as { get?: (name: string) => unknown }).get?.('skills') as
+              | { mount?(agentCtx: unknown, id?: string): Promise<unknown>; list?(): Promise<Array<{ id: string }>> }
+              | undefined
+            if (skills !== undefined) {
+              try {
+                if (typeof skills.mount === 'function') {
+                  await skills.mount(agentCtx, route.skill)
+                } else {
+                  const catalog = await skills.list?.()
+                  const found = catalog?.find((s) => s.id === route.skill)
+                  if (found !== undefined) console.log('[dsh-message-gateway] route skill available', route.skill)
+                }
+              } catch (error) {
+                console.warn('[dsh-message-gateway] route skill mount skipped', String(error))
+              }
             }
           }
           // 默认模型注入（与 dsh-headless 同源）。
@@ -256,8 +276,8 @@ export class BridgeManager {
           }
         },
       })
-      this.agents.set(key, { agent: handle.agent, dispose: () => handle.dispose() })
-      console.log('[dsh-message-gateway] dedicated agent ready', { key, session: handle.agent.session.id, provider, model })
+      this.agents.set(sessionKey, { agent: handle.agent, dispose: () => handle.dispose() })
+      console.log('[dsh-message-gateway] dedicated agent ready', { key: sessionKey, session: handle.agent.session.id, provider, model, preset: route?.agentPreset ?? '(default)', skill: route?.skill ?? undefined })
       return handle.agent
     } catch (error) {
       console.error('[dsh-message-gateway] create agent failed', error)
@@ -318,8 +338,12 @@ export class BridgeManager {
         id.sink.stream(id.frame, `busy-${Date.now().toString(36)}`, this.t('busy'), true)
         return
       }
+      // 消息路由：按平台 + 关键词前缀匹配配置的规则（第一条命中生效），
+      // 命中则剥离前缀并把消息路由到指定 agent 预设（独立会话）。
+      const route = this.matchRoute(id.key, text)
+      const routedText = route !== null && route.prefix !== '' ? text.slice(route.prefix.length).trim() : text
       // 每个聊天自动创建独立会话（与 Web 对话一致；超限自动压缩由会话层内置完成）。
-      const agent = await this.ensureAgentForKey(id.key)
+      const agent = await this.ensureAgentForKey(id.key, route?.rule)
       if (agent === null) {
         console.warn('[dsh-message-gateway] no dedicated agent available')
         return
@@ -327,7 +351,7 @@ export class BridgeManager {
       const message: UserMessage = {
         id: MessageId(`dsh-gateway-${Date.now().toString(36)}`),
         role: 'user',
-        content: [{ type: 'text', text }],
+        content: [{ type: 'text', text: routedText }],
         source: { kind: 'plugin', plugin: 'dsh-message-gateway', form: 'relay' },
       }
       const session = agent.session
@@ -488,12 +512,56 @@ export class BridgeManager {
     return this.wecom.sendMessage(chatid, content)
   }
 
+  /**
+   * 主动推送：向任意平台的目标会话发送文本（供 cron 通知、其他插件调用）。
+   * 支持平台：wecom-aibot（企微智能机器人）/ telegram / discord / email。
+   * 不支持主动推送的平台（qq 等）返回明确错误。
+   * @param platform 平台 id（见 PLATFORMS）。
+   * @param target 目标（telegram=chatId 数字串；discord=channelId；wecom-aibot=userid/群ID；email=收件地址）。
+   * @param content 文本内容。
+   * @param opts.title 可选标题（email 作为主题；其他平台拼在正文前）。
+   */
+  async pushMessage(platform: string, target: string, content: string, opts: { title?: string } = {}): Promise<{ ok: boolean; detail: string }> {
+    const text = opts.title !== undefined && opts.title !== ''
+      ? `【${opts.title}】\n${content}`
+      : content
+    switch (platform) {
+      case 'wecom-aibot': {
+        if (this.wecom === null) return { ok: false, detail: 'wecom-aibot bridge not connected' }
+        const sent = await this.wecom.sendMessage(target, text)
+        return sent ? { ok: true, detail: 'sent' } : { ok: false, detail: 'wecom send failed' }
+      }
+      case 'telegram': {
+        if (this.telegram === null) return { ok: false, detail: 'telegram bridge not connected' }
+        const chatId = Number(target)
+        if (!Number.isInteger(chatId) || chatId <= 0) return { ok: false, detail: 'telegram target must be a numeric chatId' }
+        const sent = await this.telegram.send(chatId, text)
+        return sent ? { ok: true, detail: 'sent' } : { ok: false, detail: 'telegram send failed' }
+      }
+      case 'discord': {
+        if (this.discord === null) return { ok: false, detail: 'discord bridge not connected' }
+        const sent = await this.discord.send(target, text)
+        return sent ? { ok: true, detail: 'sent' } : { ok: false, detail: 'discord send failed' }
+      }
+      case 'email': {
+        if (this.email === null) return { ok: false, detail: 'email bridge not connected' }
+        const subject = opts.title ?? 'DSH 通知'
+        const sent = await this.email.send(target, subject, content)
+        return sent ? { ok: true, detail: 'sent' } : { ok: false, detail: 'email send failed' }
+      }
+      case 'qq':
+        return { ok: false, detail: 'QQ 平台自 2025-04-21 起不支持主动推送（仅被动回复），无法发送主动消息' }
+      default:
+        return { ok: false, detail: `platform "${platform}" does not support push` }
+    }
+  }
+
   // ==================== Telegram / Discord / QQ / Email ====================
 
-  private telegram: { start(): void; stop(): void; status: BridgeStatus } | null = null
-  private discord: { start(): void; stop(): void; status: BridgeStatus } | null = null
+  private telegram: { start(): void; stop(): void; send(chatId: number, content: string): Promise<boolean>; status: BridgeStatus } | null = null
+  private discord: { start(): void; stop(): void; send(channelId: string, content: string): Promise<boolean>; status: BridgeStatus } | null = null
   private qq: { start(): void; stop(): void; status: BridgeStatus } | null = null
-  private email: { start(): void; stop(): void; status: BridgeStatus } | null = null
+  private email: { start(): void; stop(): void; send(to: string, subject: string, content: string): Promise<boolean>; status: BridgeStatus } | null = null
 
   /** 启动 Telegram 桥（长轮询）。 */
   startTelegram(cred: Record<string, string>): void {
@@ -598,6 +666,28 @@ export class BridgeManager {
     return stored ?? { state: 'none', detail: '', testedAt: null }
   }
 
+  /**
+   * 消息路由匹配：按「平台 + 关键词前缀」在配置的 routes 中找第一条命中。
+   * @param key 聊天键（`platform:chatKey`）。
+   * @param text 原始消息文本。
+   * @returns 命中的规则与匹配到的前缀（前缀需从消息中剥离后进入路由）；未命中返回 null。
+   */
+  private matchRoute(key: string, text: string): { rule: NonNullable<GatewayConfig['routes']>[number]; prefix: string } | null {
+    const platform = key.split(':')[0] ?? ''
+    const routes = this.config.routes ?? []
+    for (const rule of routes) {
+      if (rule.matchPlatform !== undefined && rule.matchPlatform !== '' && rule.matchPlatform !== platform) continue
+      const prefix = rule.matchPrefix ?? ''
+      if (prefix !== '') {
+        if (!text.startsWith(prefix)) continue
+        return { rule, prefix }
+      }
+      // 无前缀要求：平台匹配即命中。
+      return { rule, prefix: '' }
+    }
+    return null
+  }
+
   /** 斜杠命令 / 关键词命令；已处理返回 true（不经 agent）。 */
   private async handleCommand(text: string, key: string, reply: (content: string) => void): Promise<boolean> {
     if (text === '/help' || text === '帮助' || text === '菜单' || text === '？' || text === '?') {
@@ -621,6 +711,24 @@ export class BridgeManager {
         `- ${this.t('statusAgent')}: ${dot}\n` +
         `- ${this.t('statusTime')}: ${nowInShanghai()}`
       )
+      return true
+    }
+    if (text === '/stats' || text === '统计') {
+      // 各平台桥状态 + 活跃路由数。
+      const bridgeLine = (label: string, status: BridgeStatus): string => {
+        const mark = status.state === 'connected' ? '🟢' : status.state === 'connecting' ? '🟡' : status.state === 'error' ? '🔴' : '⚪'
+        return `- ${label}: ${mark} ${status.detail || status.state}`
+      }
+      const lines = [
+        `${this.t('statusTitle')} /stats`,
+        `- ${this.t('statusChats')}: ${this.chatCount()}`,
+        bridgeLine('WeCom AI Bot', this.wecomStatus()),
+        bridgeLine('Telegram', this.bridgeStatus('telegram')),
+        bridgeLine('Discord', this.bridgeStatus('discord')),
+        bridgeLine('QQ', this.bridgeStatus('qq')),
+        bridgeLine('Email', this.bridgeStatus('email')),
+      ]
+      reply(lines.join('\n'))
       return true
     }
     return false

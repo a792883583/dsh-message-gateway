@@ -380,6 +380,27 @@ export function registerGatewayRoutes(ctx: Context, manager: BridgeManager): () 
           }
           return
         }
+        if (path === '/gateway/push') {
+          // 主动推送通道：向任意平台目标发送文本（供 cron 通知、其他插件调用）。
+          // body: { platform, target, content, title? }
+          // 支持平台：wecom-aibot / telegram / discord / email（qq 官方已取消主动推送）。
+          const body = payload as { platform?: unknown; target?: unknown; content?: unknown; title?: unknown } | null
+          const platform = typeof body?.platform === 'string' ? body.platform.trim() : ''
+          const target = typeof body?.target === 'string' ? body.target.trim() : ''
+          const content = typeof body?.content === 'string' ? body.content.trim() : ''
+          const title = typeof body?.title === 'string' ? body.title.trim() : ''
+          if (platform === '' || target === '' || content === '') {
+            json(res, { ok: false, error: { code: 'internal', message: 'missing platform/target/content' } }, 400)
+            return
+          }
+          const result = await manager.pushMessage(platform, target, content, { title: title === '' ? undefined : title })
+          if (!result.ok) {
+            json(res, { ok: false, error: { code: 'internal', message: result.detail } }, 409)
+            return
+          }
+          json(res, { ok: true, value: { sent: true } })
+          return
+        }
         if (path === '/gateway/send') {
           // 主动发送通道：以机器人身份向会话发送 markdown 消息（单聊=userid，群聊=群 ID）。
           const body = payload as { chatid?: unknown; content?: unknown } | null

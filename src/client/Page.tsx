@@ -4,10 +4,11 @@
  * @module dsh-message-gateway/client/Page
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { createElement, useCallback, useEffect, useState } from 'react'
 import type { GatewayView, PlatformDef, PlatformStatus } from '../core/types.ts'
 import type { GatewayApi } from './api.ts'
 import { useT } from './i18n.ts'
+import { InboxIcon, PlatformIcon } from './icons.tsx'
 
 const STYLE = `
 .dsh-gw { --gw-fg:#24292f; --gw-muted:#6e7781; --gw-border:rgba(128,128,128,0.25);
@@ -190,7 +191,7 @@ export function GatewayPage(props: { api: GatewayApi; onClose: () => void }): Re
     <div className="dsh-gw" onClick={onClose}>
       <div className="dsh-gw-page" onClick={(event) => event.stopPropagation()}>
         <div className="dsh-gw-head">
-          <span>📮 {t('gateway.title')}</span>
+          <span><InboxIcon size={16} /> {t('gateway.title')}</span>
           <span className="spacer" />
           <button type="button" className="dsh-gw-close" title={t('gateway.close')} onClick={onClose}>
             <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor"
@@ -210,7 +211,7 @@ export function GatewayPage(props: { api: GatewayApi; onClose: () => void }): Re
                     <div key={def.id}
                       className={`dsh-gw-item${def.id === selected ? ' active' : ''}`}
                       onClick={() => select(def.id)}>
-                      <span className="icon">{def.icon}</span>
+                      <span className="icon">{createElement(PlatformIcon, { platform: def.id, size: 18 })}</span>
                       <span className="name">{t(def.nameKey)}</span>
                       <span className={`dot ${state}`} />
                       <span className="st">{t(`gateway.status.${state}`)}</span>
@@ -223,7 +224,7 @@ export function GatewayPage(props: { api: GatewayApi; onClose: () => void }): Re
               <div className="dsh-gw-detail-empty">…</div>
             ) : (
               <>
-                <h3>{selectedDef.icon} {t(selectedDef.nameKey)}</h3>
+                <h3>{createElement(PlatformIcon, { platform: selectedDef.id, size: 20 })} {t(selectedDef.nameKey)}</h3>
                 {selectedDef.hintKey !== undefined ? (
                   <div className="hint">{t(selectedDef.hintKey)}</div>
                 ) : null}
