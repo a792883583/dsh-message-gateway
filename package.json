@@ -1,6 +1,6 @@
 {
   "name": "dsh-message-gateway",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Universal message-platform gateway for the DSH web GUI: configure QQ / WeChat / WeCom / WeCom AI bot / Discord / Telegram / WhatsApp / Email / Webhooks connectors, save credentials, test connections, and run a persistent WeCom AI bot bridge with per-chat sessions and auto context compression, same as the web conversation.",
   "license": "MIT",
   "author": "Jaden Tang <jaden.tang@sjfood.com>",

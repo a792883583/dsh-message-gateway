@@ -16,6 +16,7 @@ import type { TextMessage, WsFrame } from '@wecom/aibot-node-sdk'
 import type { StoredStatus } from './gateway-store.ts'
 import type { GatewayConfig } from '../core/config.ts'
 import { botText } from './bot-i18n.ts'
+import { sanitizeSecrets } from './sanitize.ts'
 import { WecomBridge, type BridgeStatus } from './wecom-bridge.ts'
 import { TelegramBridge } from './telegram-bridge.ts'
 import { DiscordBridge } from './discord-bridge.ts'
@@ -385,7 +386,7 @@ export class BridgeManager {
         p.heartbeat.unref?.()
       }
       agent.send(message, 'next-turn', true)
-      console.log('[dsh-message-gateway] sent to agent', { key: id.key, text: text.slice(0, 60), baseSeq: p.cursor })
+      console.log('[dsh-message-gateway] sent to agent', { key: id.key, text: sanitizeSecrets(text.slice(0, 60)), baseSeq: p.cursor })
       // 轮询事件快照：chunk 流式推送、assistant/message 定稿。
       p.timer = setInterval(() => {
         if (this.pendingMap.get(id.key) !== p) return
@@ -452,7 +453,7 @@ export class BridgeManager {
       this.awaiting = { resolve: (reply: string): void => settle(true, reply) }
       try {
         agent.send(message, 'next-turn', true)
-        console.log('[dsh-message-gateway] webhook sent to agent', { text: text.slice(0, 60), baseSeq: cursor })
+        console.log('[dsh-message-gateway] webhook sent to agent', { text: sanitizeSecrets(text.slice(0, 60)), baseSeq: cursor })
       } catch (error) {
         console.error('[dsh-message-gateway] webhook send failed', error)
         settle(false, 'send failed')

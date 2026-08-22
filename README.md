@@ -16,6 +16,7 @@ DSH Web GUI 的消息平台网关插件：在侧边栏「新会话」按钮下�
   - **WhatsApp**：填 Token + Phone Number ID，Meta 后台配置 Webhook（`/gateway/whatsapp/webhook`）后发消息即自动对话
   - **Email**：填 IMAP（收件，993/143）+ SMTP（回复，465/587/25），按邮件线程自动归类会话，回复用 Re: 原主题
 - **凭据管理**：明文只落盘 `~/.dsh/gateway.json`（权限 600，原子写入），`/gateway/list` 永不回传凭据明文，只返回 configured 标记
+- **敏感信息脱敏**：写入日志 / 控制台的消息内容自动遮蔽疑似密钥（`sk-` 前缀、GitHub token、`Bearer`、`password=` 赋值、私钥 PEM 等通用模式），机器人对话里的机密不会泄露到日志文件
 - **连接测试**：每个平台独立的真实连接测试——Telegram/Discord 走 Bot API、QQ 走 access_token、企微走 gettoken、微信公众号走 cgi-bin/token、WhatsApp 走 Graph API、Email 走 IMAP TCP banner、企微智能机器人走官方 SDK 长连接（认证成功即通过）
 - **企业微信智能机器人常驻桥**：官方 SDK WebSocket 长连接，断线自动指数退避重连；收到文本消息 → 注入隔离的专用 agent 会话唤醒 DSH 驱动 → 回复按 chunk 流式回发，结束时经 response_url 定稿
   - **群聊 @提及剥离**：去掉开头的 @机器人名后交给助手
@@ -74,6 +75,10 @@ dsh plugin --profile web add dsh-message-gateway
 
 - **host 半区**（`lib/index.js`）：`/gateway/*` 路由（list / save / delete / test / wechat-status）+ `BridgeManager`（agent 会话注入与事件流轮询）+ `WecomBridge`（SDK 长连接生命周期）+ `gateway-store`（凭据存储）
 - **client 半区**（`lib/client.js`）：侧边栏按钮挂载 + 全屏平台管理页（React，经 `__ModuleLoader__` 闭包加载）
+
+## 反馈
+
+使用中遇到问题或有功能建议？欢迎到 [GitHub Issues](https://github.com/a792883583/dsh-message-gateway/issues) 反馈，帮助我们把插件做得更好。
 
 ## License
 

@@ -16,6 +16,7 @@ A message-platform gateway plugin for the DSH Web GUI: a "Message platforms" ent
   - **WhatsApp**: fill in Token + Phone Number ID, configure the webhook (`/gateway/whatsapp/webhook`) in the Meta console, and users who message get auto replies
   - **Email**: fill in IMAP (receiving, 993/143) + SMTP (replying, 465/587/25); messages are grouped into per-thread sessions and replies use Re: original subject
 - **Credential management**: plaintext is persisted only to `~/.dsh/gateway.json` (mode 600, atomic write); `/gateway/list` never returns credential plaintext, only a `configured` flag
+- **Secret redaction**: message content written to logs / console is automatically masked for likely secrets (`sk-` prefixed keys, GitHub tokens, `Bearer`, `password=` assignments, PEM private keys, and other common patterns), so secrets in bot conversations never leak into log files
 - **Connection tests**: real per-platform checks — Telegram/Discord via Bot API, QQ via access_token, WeCom via gettoken, WeChat MP via cgi-bin/token, WhatsApp via Graph API, Email via IMAP TCP banner, WeCom AI bot via the official SDK long connection (authenticated = pass)
 - **WeCom AI bot persistent bridge**: official SDK WebSocket long connection with exponential backoff reconnect; incoming text messages are injected into an isolated dedicated agent session that wakes the DSH driver; replies stream back as chunks and finalize via `response_url`
   - **Group-chat @mention stripping**: the leading `@bot-name` is removed before the assistant sees the message
@@ -71,6 +72,10 @@ All options have defaults and the plugin works out of the box; tune them via `ds
 
 - **Host half** (`lib/index.js`): `/gateway/*` routes (list / save / delete / test / wechat-status) + `BridgeManager` (agent session injection and event-stream polling) + `WecomBridge` (SDK long-connection lifecycle) + `gateway-store` (credential persistence)
 - **Client half** (`lib/client.js`): sidebar button mount + full-screen platform manager (React, loaded via the `__ModuleLoader__` closure)
+
+## Feedback
+
+Found a bug or have a feature request? Open an issue on [GitHub Issues](https://github.com/a792883583/dsh-message-gateway/issues) — your feedback helps us make the plugin better.
 
 ## License
 
