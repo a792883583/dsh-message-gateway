@@ -73,6 +73,10 @@ Todas las opciones tienen valores por defecto y el plugin funciona de inmediato;
 - **Mitad host** (`lib/index.js`): rutas `/gateway/*` (list / save / delete / test / wechat-status) + `BridgeManager` (inyección de sesión de agente y sondeo del flujo de eventos) + `WecomBridge` (ciclo de vida de la conexión larga del SDK) + `gateway-store` (persistencia de credenciales)
 - **Mitad cliente** (`lib/client.js`): montaje del botón de la barra lateral + gestor a pantalla completa (React, cargado vía el cierre de `__ModuleLoader__`)
 
+## Comentarios
+
+¿Encontró un error o tiene una sugerencia? Abra un issue en [GitHub Issues](https://github.com/a792883583/dsh-message-gateway/issues) — sus comentarios nos ayudan a mejorar el plugin.
+
 ## Licencia
 
 MIT
