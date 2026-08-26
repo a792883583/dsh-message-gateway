@@ -29,6 +29,7 @@ DSH Web GUI 的消息平台网关插件：在侧边栏「新会话」按钮下�
     - 未连接的平台返回 `bridge not connected`
   - **消息路由规则**（插件配置 `routes`）：按「平台 + 关键词前缀」把消息路由到指定 **agent 预设**（独立会话）与可选**专用模型 / skill**。例如配置 `{ id: "code", matchPlatform: "telegram", matchPrefix: "code ", agentPreset: "code" }` 后，Telegram 里发 `code 帮我写个函数` 会进入 code 预设的独立会话。按顺序匹配第一条命中；未命中走默认 agent
   - **斜杠命令**：`/help` / `/time` / `/status` / `/stats`（含中文别名：帮助/菜单/时间/状态/统计）；`/stats` 展示各平台桥连接状态与活跃会话数
+  - **Agent 主动推送工具**（`send_chat_message`）：自动向 DSH 注册通用推送工具，AI 助手在对话中可自主调用该工具将总结、任务结果或告警推送至 Telegram、Discord、企业微信或 Email
 - **Webhook 接收端点**：`POST /gateway/webhook/in` 接收外部系统消息（`text` / `content` / `message` 任一字段），注入专用 agent 会话并同步返回完整回复；可配置 HMAC-SHA256 签名密钥校验（契约见 [docs/webhooks.md](docs/webhooks.md)）
 - **微信个人号（可选外部网关）**：对接本机 Wechaty HTTP 网关的扫码登录与状态轮询（契约见 [docs/wechaty-gateway.md](docs/wechaty-gateway.md)）
 - **多语言**：中文 / English / Español，自动跟随 DSH Web 界面语言（西班牙语浏览器自动切换），默认简体中文
