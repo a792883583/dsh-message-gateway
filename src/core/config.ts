@@ -55,6 +55,12 @@ export interface GatewayConfig {
   welcomeReply: boolean
   /** 消息路由规则列表（按顺序匹配，第一条命中生效）。 */
   routes?: GatewayRoute[]
+  /** 外部 Webhooks 广播订阅目标列表（Outbound Webhooks）。 */
+  outboundWebhooks?: Array<{
+    url: string
+    secret?: string
+    events?: string[]
+  }>
 }
 
 /** 插件配置 schema（cordis Loader 校验 + dsh 配置面板渲染）。 */
@@ -74,6 +80,13 @@ export const Config = Schema.object({
   autoStartEmail: Schema.boolean().default(true).description('启动时自动用已保存的 Email 凭据建立常驻连接（IMAP 轮询）'),
   groupReply: Schema.boolean().default(true).description('是否回复群聊消息（false 时只处理单聊）'),
   welcomeReply: Schema.boolean().default(false).description('是否在用户当天首次进入单聊时自动发送欢迎语（默认 false 保持免打扰，设为 true 开启）'),
+  outboundWebhooks: Schema.array(Schema.object({
+    url: Schema.string().required().description('目标 Webhook 接收 URL'),
+    secret: Schema.string().description('可选 HMAC-SHA256 签名密钥（将在 X-Gateway-Signature 头附带 hex 签名）'),
+    events: Schema.array(Schema.string()).default(['*']).description('订阅的事件类型（如 ["message.in", "message.out", "agent.done"]，默认 ["*"]）'),
+  }))
+    .default([])
+    .description('Outbound Webhooks 外部事件订阅广播列表'),
   routes: Schema.array(Schema.object({
     id: Schema.string().required().description('规则 id（唯一标识）'),
     matchPlatform: Schema.string().description('匹配平台 id（telegram/discord/qq/wecom-aibot/email/webhook 等）；缺省=全部平台'),

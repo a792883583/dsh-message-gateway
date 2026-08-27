@@ -584,6 +584,31 @@ export class BridgeManager {
     }
   }
 
+  /**
+   * 向已配置的 Outbound Webhooks 广播事件（异步投递，失败不阻塞）。
+   */
+  async broadcastEvent(event: string, payload: Record<string, unknown>): Promise<void> {
+    const webhooks = this.config.outboundWebhooks ?? []
+    if (webhooks.length === 0) return
+    const { createHmac } = await import('node:crypto')
+    const bodyStr = JSON.stringify({ event, timestamp: Date.now(), ...payload })
+    for (const hook of webhooks) {
+      const allowed = hook.events ?? ['*']
+      if (!allowed.includes('*') && !allowed.includes(event)) continue
+      void (async () => {
+        try {
+          const headers: Record<string, string> = { 'content-type': 'application/json' }
+          if (hook.secret) {
+            headers['x-gateway-signature'] = createHmac('sha256', hook.secret).update(bodyStr, 'utf8').digest('hex')
+          }
+          await fetch(hook.url, { method: 'POST', headers, body: bodyStr, signal: AbortSignal.timeout(10000) })
+        } catch (error) {
+          console.warn('[dsh-message-gateway] outbound webhook post failed', hook.url, String(error))
+        }
+      })()
+    }
+  }
+
   // ==================== Telegram / Discord / QQ / Email ====================
 
   private telegram: { start(): void; stop(): void; send(chatId: number, content: string): Promise<boolean>; status: BridgeStatus } | null = null
