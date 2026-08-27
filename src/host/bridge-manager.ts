@@ -85,6 +85,7 @@ export class BridgeManager {
   private awaiting: { resolve: (reply: string) => void } | null = null
   /** 各聊天的独立 agent 会话（key = 平台:chatKey；webhook 固定 'webhook'）。 */
   private agents = new Map<string, { agent: Agent; dispose: () => Promise<void> }>()
+  private disposed = false
 
   constructor(
     private readonly ctx: Context,
@@ -301,14 +302,38 @@ export class BridgeManager {
     return true
   }
 
-  /** 插件卸载时释放全部聊天会话。 */
+  /** 插件卸载时释放全部聊天会话与长连接（带超时脱钩保护，防死锁）。 */
   async dispose(): Promise<void> {
-    this.finishAllPending()
-    const entries = [...this.agents.values()]
-    this.agents.clear()
-    await Promise.allSettled(entries.map((entry) => entry.dispose()))
+    if (this.disposed) return
+    this.disposed = true
+
+    // 1. 立即停止所有外部长连接与长轮询，防止卸载后继续接收外部事件
     this.wecom?.stop()
     this.wecom = null
+    this.telegram?.stop()
+    this.telegram = null
+    this.discord?.stop()
+    this.discord = null
+    this.qq?.stop()
+    this.qq = null
+    this.email?.stop()
+    this.email = null
+
+    // 2. 清除在途轮询与心跳定时器
+    this.finishAllPending()
+
+    // 3. 释放全部子 Agent 会话（超时保护：最多等待 1.5s，避免正在执行工具调用的会话死锁插件卸载）
+    const entries = [...this.agents.values()]
+    this.agents.clear()
+    const disposePromises = entries.map((entry) =>
+      entry.dispose().catch((error) => {
+        console.warn('[dsh-message-gateway] agent dispose warning', String(error))
+      }),
+    )
+    await Promise.race([
+      Promise.allSettled(disposePromises),
+      new Promise<void>((resolve) => setTimeout(resolve, 1500)),
+    ])
   }
 
   private finishAllPending(): void {
@@ -320,6 +345,7 @@ export class BridgeManager {
    * 回复经 sink 流式回发。所有已打通的平台共用此管线。
    */
   async handleExternalMessage(id: ChatIdentity, rawText: string): Promise<void> {
+    if (this.disposed) return
     const text = stripMention(rawText)
     const reply = (content: string): void => {
       id.sink.stream(id.frame, `cmd-${Date.now().toString(36)}`, content, true)

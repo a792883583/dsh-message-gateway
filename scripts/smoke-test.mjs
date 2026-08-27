@@ -485,6 +485,8 @@ const imapPort = imapServer.address().port
 const smtpPort = smtpServer.address().port
 
 let emailReceived = null
+let emailReplyDone = null
+const emailDonePromise = new Promise((r) => { emailReplyDone = r })
 const eb = new EmailBridge({
   imapHost: '127.0.0.1', imapPort: String(imapPort), imapUser: 'user', imapPass: 'pass',
   smtpHost: '127.0.0.1', smtpPort: String(smtpPort), smtpUser: 'user', smtpPass: 'pass',
@@ -507,8 +509,10 @@ check('  回复正文正确', smtpCaptured?.includes('邮件回复内容'))
 check('  主题 Re: 原主题', smtpCaptured?.includes('Subject: Re: Hello from email'))
 check('  收件人为发件人', smtpCaptured?.includes('To: alice@example.com'))
 eb.stop()
+imapConnections.forEach((s) => s.destroy())
 imapServer.close()
 smtpServer.close()
+setTimeout(() => process.exit(failures === 0 ? 0 : 1), 50)
 
 console.log(failures === 0 ? '\n🎉 全部通过' : `\n💥 ${failures} 项失败`)
 process.exit(failures === 0 ? 0 : 1)
