@@ -480,9 +480,10 @@ export class BridgeManager {
         void this.handleExternalMessage({ key, frame, sink, chatType: chattype === 'group' ? 'group' : 'single' }, rawText)
       },
       onEnter: (frame) => {
-        // 用户当天首次进入单聊会话 → 欢迎语。
+        // 用户当天首次进入单聊会话：仅在配置开启 welcomeReply（默认 false 免打扰）时回复欢迎语。
+        if (!this.config.welcomeReply) return
         const userid = frame.body?.from?.userid ?? ''
-        console.log('[dsh-message-gateway] enter chat', { userid })
+        console.log('[dsh-message-gateway] enter chat welcome', { userid })
         void this.wecom?.welcome(frame, this.t('welcome'))
       },
     })

@@ -21,7 +21,7 @@ A message-platform gateway plugin for the DSH Web GUI: a "Message platforms" ent
 - **WeCom AI bot persistent bridge**: official SDK WebSocket long connection with exponential backoff reconnect; incoming text messages are injected into an isolated dedicated agent session that wakes the DSH driver; replies stream back as chunks and finalize via `response_url`
   - **Group-chat @mention stripping**: the leading `@bot-name` is removed before the assistant sees the message
   - **Slash commands**: `/help` / `/time` / `/status` (Chinese aliases: 帮助/菜单/时间/状态)
-  - **Enter-chat welcome**: a welcome message is auto-replied when a user enters a single chat for the first time that day
+  - **Enter-chat welcome**: optional configuration (`welcomeReply`, defaults to `false` for zero disturbance; when set to `true`, auto-replies a greeting when a user enters single chat for the first time that day)
   - **Proactive send channel**: `POST /gateway/send` (`{"chatid": "...", "content": "..."}`, single chat = userid, group chat = group id) sends markdown messages as the bot
   - **Universal proactive push**: `POST /gateway/push` (`{"platform": "...", "target": "...", "content": "...", "title": "optional"}`) pushes text to any platform target for task notifications / other plugins:
     - `platform` supports `telegram` (target = numeric chatId), `discord` (target = channelId), `wecom-aibot` (target = userid/group id), `email` (target = address, title becomes the subject)

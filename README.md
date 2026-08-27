@@ -21,7 +21,7 @@ DSH Web GUI 的消息平台网关插件：在侧边栏「新会话」按钮下�
 - **企业微信智能机器人常驻桥**：官方 SDK WebSocket 长连接，断线自动指数退避重连；收到文本消息 → 注入隔离的专用 agent 会话唤醒 DSH 驱动 → 回复按 chunk 流式回发，结束时经 response_url 定稿
   - **群聊 @提及剥离**：去掉开头的 @机器人名后交给助手
   - **斜杠命令**：`/help` / `/time` / `/status`（含中文别名：帮助/菜单/时间/状态）
-  - **进入会话欢迎语**：用户当天首次进入单聊时自动回复欢迎消息
+  - **进入会话欢迎语**：可选配置（配置项 `welcomeReply`，默认 `false` 保持免打扰，开启后用户当天首次进入单聊自动回复欢迎词）
   - **主动发送通道**：`POST /gateway/send`（`{"chatid": "...", "content": "..."}`，单聊=userid，群聊=群 ID）以机器人身份主动发送 markdown 消息
   - **通用主动推送**：`POST /gateway/push`（`{"platform": "...", "target": "...", "content": "...", "title": "可选"}`）向任意平台目标推送文本，供定时任务通知 / 其他插件调用：
     - `platform` 支持：`telegram`（target=chatId 数字）、`discord`（target=channelId）、`wecom-aibot`（target=userid/群ID）、`email`（target=收件地址，title 作邮件主题）

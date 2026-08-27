@@ -21,7 +21,7 @@ Un plugin de pasarela de mensajería para la GUI web de DSH: una entrada "Plataf
 - **Puente persistente del Bot de IA de WeCom**: conexión larga WebSocket del SDK oficial con reconexión por retroceso exponencial; los mensajes de texto entrantes se inyectan en una sesión de agente dedicada y aislada que despierta al controlador de DSH; las respuestas se transmiten como fragmentos y finalizan vía `response_url`
   - **Eliminación de menciones @ en grupos**: se quita el `@nombre-del-bot` inicial antes de que el asistente vea el mensaje
   - **Comandos de barra**: `/help` / `/time` / `/status` (alias en chino: 帮助/菜单/时间/状态)
-  - **Mensaje de bienvenida**: se responde automáticamente un saludo cuando un usuario entra a un chat individual por primera vez ese día
+  - **Mensaje de bienvenida**: configuración opcional (`welcomeReply`, por defecto `false` para cero interrupciones; al activarse en `true`, responde un saludo cuando un usuario entra al chat individual por primera vez ese día)
   - **Canal de envío proactivo**: `POST /gateway/send` (`{"chatid": "...", "content": "..."}`, chat individual = userid, grupo = id de grupo) envía mensajes markdown como el bot
   - **Push proactivo universal**: `POST /gateway/push` (`{"platform": "...", "target": "...", "content": "...", "title": "opcional"}`) envía texto a cualquier plataforma para notificaciones de tareas / otros plugins:
     - `platform` admite `telegram` (target = chatId numérico), `discord` (target = channelId), `wecom-aibot` (target = userid/id de grupo), `email` (target = correo, title como asunto)
