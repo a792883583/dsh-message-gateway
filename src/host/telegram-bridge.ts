@@ -156,6 +156,40 @@ export class TelegramBridge {
     return result !== null
   }
 
+  /**
+   * 主动推送图片：向指定 chat 发送照片（支持 Buffer 或图片 URL）。
+   * @param chatId 目标聊天 ID
+   * @param photo 图片数据 Buffer 或公网图片 URL
+   * @param caption 可选图片附带文字说明
+   * @param filename 可选文件名
+   */
+  async sendPhoto(chatId: number, photo: Buffer | string, caption?: string, filename = 'photo.png'): Promise<boolean> {
+    try {
+      if (typeof photo === 'string') {
+        const body: Record<string, unknown> = { chat_id: chatId, photo }
+        if (caption) body.caption = caption.slice(0, 1024)
+        const result = (await this.api('sendPhoto', body)) as { message_id?: number } | null
+        return result?.message_id !== undefined
+      }
+      // multipart/form-data 上传 Buffer
+      const form = new FormData()
+      form.append('chat_id', String(chatId))
+      form.append('photo', new Blob([new Uint8Array(photo)]), filename)
+      if (caption) form.append('caption', caption.slice(0, 1024))
+      const response = await fetch(`https://api.telegram.org/bot${this.token}/sendPhoto`, {
+        method: 'POST',
+        body: form,
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!response.ok) return false
+      const data = (await response.json()) as { ok?: boolean }
+      return data.ok === true
+    } catch (error) {
+      console.error('[dsh-message-gateway] telegram sendPhoto failed', error)
+      return false
+    }
+  }
+
   /** 发送文本（Markdown 失败自动降级纯文本）。 */
   private async sendText(chatId: number, text: string): Promise<{ messageId: number } | null> {
     const body = { chat_id: chatId, text: text.slice(0, MSG_LIMIT), parse_mode: 'Markdown', disable_web_page_preview: true }

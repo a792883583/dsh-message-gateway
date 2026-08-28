@@ -1,0 +1,105 @@
+<svg width="1200" height="720" viewBox="0 0 1200 720" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#0f172a"/>
+        <stop offset="100%" stop-color="#1e293b"/>
+      </linearGradient>
+      <linearGradient id="card" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#1e293b"/>
+        <stop offset="100%" stop-color="#334155"/>
+      </linearGradient>
+      <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+        <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000" flood-opacity="0.45"/>
+      </filter>
+    </defs>
+    
+    <rect width="1200" height="720" fill="url(#bg)"/>
+    
+    <!-- Modal Container -->
+    <rect x="80" y="50" width="1040" height="620" rx="16" fill="#0b1120" stroke="#334155" stroke-width="1.5" filter="url(#shadow)"/>
+    
+    <!-- Modal Header -->
+    <text x="120" y="96" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="20" font-weight="700" fill="#f8fafc">📮 消息平台 (Message Gateway)</text>
+    <text x="120" y="120" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" fill="#94a3b8">全平台消息连接器凭据管理、连接测试与多模态主动推送</text>
+    <circle cx="1080" cy="90" r="14" fill="#1e293b" stroke="#475569"/>
+    <text x="1074" y="95" font-family="sans-serif" font-size="14" fill="#cbd5e1">✕</text>
+    
+    <!-- Sidebar List -->
+    <rect x="110" y="150" width="280" height="490" rx="12" fill="#0f172a" stroke="#1e293b"/>
+    
+    <!-- Item: WeCom AI Bot (Selected) -->
+    <rect x="122" y="165" width="256" height="52" rx="8" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
+    <text x="140" y="197" font-size="20">🤖</text>
+    <text x="175" y="192" font-family="sans-serif" font-size="14" font-weight="600" fill="#38bdf8">企业微信智能机器人</text>
+    <circle cx="350" cy="191" r="4" fill="#22c55e"/>
+    
+    <!-- Item: Telegram -->
+    <rect x="122" y="225" width="256" height="50" rx="8" fill="transparent"/>
+    <text x="140" y="256" font-size="20">✈️</text>
+    <text x="175" y="256" font-family="sans-serif" font-size="14" fill="#cbd5e1">Telegram</text>
+    <text x="330" y="256" font-family="sans-serif" font-size="11" fill="#64748b">未配置</text>
+    
+    <!-- Item: Discord -->
+    <rect x="122" y="281" width="256" height="50" rx="8" fill="transparent"/>
+    <text x="140" y="312" font-size="20">🎮</text>
+    <text x="175" y="312" font-family="sans-serif" font-size="14" fill="#cbd5e1">Discord</text>
+    <text x="330" y="312" font-family="sans-serif" font-size="11" fill="#64748b">未配置</text>
+
+    <!-- Item: DingTalk -->
+    <rect x="122" y="337" width="256" height="50" rx="8" fill="transparent"/>
+    <text x="140" y="368" font-size="20">📌</text>
+    <text x="175" y="368" font-family="sans-serif" font-size="14" fill="#cbd5e1">钉钉机器人</text>
+    <text x="330" y="368" font-family="sans-serif" font-size="11" fill="#64748b">未配置</text>
+
+    <!-- Item: Feishu -->
+    <rect x="122" y="393" width="256" height="50" rx="8" fill="transparent"/>
+    <text x="140" y="424" font-size="20">🕊️</text>
+    <text x="175" y="424" font-family="sans-serif" font-size="14" fill="#cbd5e1">飞书机器人</text>
+    <text x="330" y="424" font-family="sans-serif" font-size="11" fill="#64748b">未配置</text>
+
+    <!-- Item: Bark -->
+    <rect x="122" y="449" width="256" height="50" rx="8" fill="transparent"/>
+    <text x="140" y="480" font-size="20">🔔</text>
+    <text x="175" y="480" font-family="sans-serif" font-size="14" fill="#cbd5e1">Bark (iOS)</text>
+    <text x="330" y="480" font-family="sans-serif" font-size="11" fill="#64748b">未配置</text>
+
+    <!-- Item: Email -->
+    <rect x="122" y="505" width="256" height="50" rx="8" fill="transparent"/>
+    <text x="140" y="536" font-size="20">📧</text>
+    <text x="175" y="536" font-family="sans-serif" font-size="14" fill="#cbd5e1">Email</text>
+    <text x="330" y="536" font-family="sans-serif" font-size="11" fill="#64748b">未配置</text>
+    
+    <!-- Detail Pane -->
+    <rect x="410" y="150" width="680" height="490" rx="12" fill="#0f172a" stroke="#1e293b"/>
+    
+    <!-- Detail Header -->
+    <text x="440" y="192" font-size="24">🤖</text>
+    <text x="476" y="192" font-family="sans-serif" font-size="17" font-weight="600" fill="#f8fafc">企业微信智能机器人 (WeCom AI Bot)</text>
+    <rect x="960" y="174" width="100" height="26" rx="13" fill="#064e3b" stroke="#059669"/>
+    <text x="985" y="191" font-family="sans-serif" font-size="12" font-weight="600" fill="#34d399">已连接</text>
+    
+    <text x="440" y="226" font-family="sans-serif" font-size="12" fill="#94a3b8">官方 SDK WebSocket 长连接常驻，支持图文多模态主动推送与专属 Agent 会话流式对话</text>
+    
+    <!-- Form Fields -->
+    <text x="440" y="270" font-family="sans-serif" font-size="13" font-weight="500" fill="#cbd5e1">Bot ID</text>
+    <rect x="440" y="282" width="620" height="40" rx="6" fill="#1e293b" stroke="#334155"/>
+    <text x="455" y="307" font-family="monospace" font-size="13" fill="#94a3b8">aibPrDeqoRlsvBrJcLQNan6_fC1ZYStWKZi</text>
+    
+    <text x="440" y="350" font-family="sans-serif" font-size="13" font-weight="500" fill="#cbd5e1">Secret</text>
+    <rect x="440" y="362" width="620" height="40" rx="6" fill="#1e293b" stroke="#334155"/>
+    <text x="455" y="387" font-family="monospace" font-size="13" fill="#64748b">••••••••••••••••••••••••••••••••••••••••</text>
+    
+    <!-- Features Box -->
+    <rect x="440" y="425" width="620" height="125" rx="8" fill="#1e293b" stroke="#334155" stroke-dasharray="4"/>
+    <text x="460" y="452" font-family="sans-serif" font-size="13" font-weight="600" fill="#38bdf8">🚀 通用主动图文推送接口能力 (POST /gateway/push)</text>
+    <text x="460" y="478" font-family="sans-serif" font-size="12" fill="#94a3b8">• 支持文字 (Markdown) + 图片 (Base64 或公网 URL) 同步或独立推送</text>
+    <text x="460" y="500" font-family="sans-serif" font-size="12" fill="#94a3b8">• 自动完成媒体素材分片上传与原生下发 (media_id / sendMediaMessage)</text>
+    <text x="460" y="522" font-family="sans-serif" font-size="12" fill="#94a3b8">• 适用定时任务通知、自动签到成功截图、流水线预警告警</text>
+    
+    <!-- Action Buttons -->
+    <rect x="860" y="575" width="95" height="38" rx="6" fill="#1e293b" stroke="#475569"/>
+    <text x="882" y="599" font-family="sans-serif" font-size="13" font-weight="500" fill="#e2e8f0">测试连接</text>
+    
+    <rect x="965" y="575" width="95" height="38" rx="6" fill="#0284c7"/>
+    <text x="997" y="599" font-family="sans-serif" font-size="13" font-weight="600" fill="#ffffff">保存</text>
+  </svg>

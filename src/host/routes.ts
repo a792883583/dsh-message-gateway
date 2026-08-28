@@ -17,7 +17,7 @@ import { QqWebhookBridge } from './qq-bridge.ts'
 
 type Envelope<T> = { ok: true; value: T } | { ok: false; error: { code: string; message: string } }
 
-const BODY_CAP_BYTES = 1 << 20
+const BODY_CAP_BYTES = 8 << 20
 
 /** 回调型平台在插件内的端点路径（用户配置到对应平台后台的公网 URL 后缀）。 */
 export const CALLBACK_PATHS: Record<string, string> = {
@@ -381,24 +381,67 @@ export function registerGatewayRoutes(ctx: Context, manager: BridgeManager): () 
           return
         }
         if (path === '/gateway/push') {
-          // 主动推送通道：向任意平台目标发送文本（供 cron 通知、其他插件调用）。
-          // body: { platform, target, content, title? }
-          // 支持平台：wecom-aibot / telegram / discord / email（qq 官方已取消主动推送）。
-          const body = payload as { platform?: unknown; target?: unknown; content?: unknown; title?: unknown } | null
+          // 主动推送通道：向任意平台目标发送文本与/或图片（供 cron 通知、外部脚本、其他插件调用）。
+          // body: { platform, target, content?, title?, image?, filename? }
+          // image: Base64 编码的图片数据；content 与 image 至少提供其一。
+          const body = payload as { platform?: unknown; target?: unknown; content?: unknown; title?: unknown; image?: unknown; filename?: unknown } | null
           const platform = typeof body?.platform === 'string' ? body.platform.trim() : ''
           const target = typeof body?.target === 'string' ? body.target.trim() : ''
           const content = typeof body?.content === 'string' ? body.content.trim() : ''
           const title = typeof body?.title === 'string' ? body.title.trim() : ''
-          if (platform === '' || target === '' || content === '') {
-            json(res, { ok: false, error: { code: 'internal', message: 'missing platform/target/content' } }, 400)
+          const imageB64 = typeof body?.image === 'string' ? body.image.trim() : ''
+          const filename = typeof body?.filename === 'string' && body.filename.trim() !== '' ? body.filename.trim() : undefined
+          if (platform === '' || target === '' || (content === '' && imageB64 === '')) {
+            json(res, { ok: false, error: { code: 'internal', message: 'missing platform/target, or both content and image are empty' } }, 400)
             return
           }
-          const result = await manager.pushMessage(platform, target, content, { title: title === '' ? undefined : title })
-          if (!result.ok) {
-            json(res, { ok: false, error: { code: 'internal', message: result.detail } }, 409)
-            return
+          // 文本部分推送
+          if (content !== '') {
+            const textResult = await manager.pushMessage(platform, target, content, { title: title === '' ? undefined : title })
+            if (!textResult.ok) {
+              json(res, { ok: false, error: { code: 'internal', message: textResult.detail } }, 409)
+              return
+            }
+          }
+          // 图片部分推送（支持 Base64 数据或 http(s):// 公网 URL）
+          if (imageB64 !== '') {
+            let imagePayload: Buffer | string
+            if (/^https?:\/\//i.test(imageB64)) {
+              // 传入的是图片 URL
+              imagePayload = imageB64
+            } else {
+              // 传入的是 Base64 数据（支持 data:image/xxx;base64,... 前缀）
+              const cleanB64 = imageB64.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '')
+              try {
+                imagePayload = Buffer.from(cleanB64, 'base64')
+              } catch {
+                json(res, { ok: false, error: { code: 'internal', message: 'invalid base64 image data' } }, 400)
+                return
+              }
+            }
+            const imgResult = await manager.pushImage(platform, target, imagePayload, {
+              caption: content !== '' ? undefined : (title !== '' ? title : undefined),
+              filename,
+            })
+            if (!imgResult.ok) {
+              json(res, { ok: false, error: { code: 'internal', message: imgResult.detail } }, 409)
+              return
+            }
           }
           json(res, { ok: true, value: { sent: true } })
+          return
+        }
+        if (path === '/gateway/recent-target') {
+          // 获取最近向机器人发消息的发送者 ID（单聊=userid，群聊=chatid）
+          const fs = await import('node:fs')
+          const pathModule = await import('node:path')
+          const os = await import('node:os')
+          const targetFile = pathModule.join(os.homedir(), '.dsh', 'latest_wecom_target.txt')
+          let target = ''
+          try {
+            target = fs.readFileSync(targetFile, 'utf8').trim()
+          } catch {}
+          json(res, { ok: true, value: { target } })
           return
         }
         if (path === '/gateway/send') {

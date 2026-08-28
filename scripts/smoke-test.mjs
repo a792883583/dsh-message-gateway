@@ -4,7 +4,10 @@
  * 运行：node scripts/smoke-test.mjs
  */
 import { BridgeManager } from '../lib/index.js'
+import { createServer } from 'node:http'
 import { createHash } from 'node:crypto'
+
+const nativeFetch = globalThis.fetch
 
 function sha1Hex(parts) {
   return createHash('sha1').update([...parts].sort().join('')).digest('hex')
@@ -508,6 +511,113 @@ check('SMTP 已收到回复', smtpCaptured !== null)
 check('  回复正文正确', smtpCaptured?.includes('邮件回复内容'))
 check('  主题 Re: 原主题', smtpCaptured?.includes('Subject: Re: Hello from email'))
 check('  收件人为发件人', smtpCaptured?.includes('To: alice@example.com'))
+// ==========================================
+// 10. 全平台主动推送与图片功能测试 (pushImage / sendPhoto / sendImage)
+// ==========================================
+console.log('\n[10] 全平台图片与主动推送')
+
+const { TelegramBridge: TBTest, DiscordBridge: DBTest } = await import('../lib/index.js')
+
+// [10.1] Telegram sendPhoto
+{
+  let photoCaptured = null
+  const fakeServer = createServer(async (req, res) => {
+    if (req.url?.includes('sendPhoto')) {
+      const chunks = []
+      for await (const chunk of req) chunks.push(chunk)
+      const raw = Buffer.concat(chunks).toString('utf8')
+      photoCaptured = raw
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, result: { message_id: 888 } }))
+      return
+    }
+    res.writeHead(404).end()
+  })
+  await new Promise((r) => fakeServer.listen(0, '127.0.0.1', r))
+  const port = fakeServer.address().port
+
+  globalThis.fetch = (url, opts) => {
+    if (typeof url === 'string' && url.includes('api.telegram.org/botFAKE_TOKEN/sendPhoto')) {
+      return nativeFetch(`http://127.0.0.1:${port}/sendPhoto`, opts)
+    }
+    return nativeFetch(url, opts)
+  }
+
+  const tb = new TBTest('FAKE_TOKEN', { onStatus: () => {}, onText: () => {} })
+  const sent = await tb.sendPhoto(12345, Buffer.from('test-image-data'), '测试说明')
+  check('Telegram sendPhoto 成功发送图片', sent === true)
+  check('  包含目标 chatId', photoCaptured?.includes('12345') === true)
+  check('  包含 caption 说明', photoCaptured?.includes('测试说明') === true)
+  check('  包含图片二进制块', photoCaptured?.includes('test-image-data') === true)
+
+  globalThis.fetch = nativeFetch
+  fakeServer.close()
+}
+
+// [10.2] Discord sendImage
+{
+  let discordFormCaptured = null
+  const fakeServer = createServer(async (req, res) => {
+    if (req.url?.includes('/messages') && req.method === 'POST') {
+      const chunks = []
+      for await (const chunk of req) chunks.push(chunk)
+      discordFormCaptured = Buffer.concat(chunks).toString('utf8')
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ id: 'msg-999' }))
+      return
+    }
+    res.writeHead(404).end()
+  })
+  await new Promise((r) => fakeServer.listen(0, '127.0.0.1', r))
+  const port = fakeServer.address().port
+
+  globalThis.fetch = (url, opts) => {
+    if (typeof url === 'string' && url.includes('discord.com/api/v10/channels/channel-777/messages')) {
+      return nativeFetch(`http://127.0.0.1:${port}/messages`, opts)
+    }
+    return nativeFetch(url, opts)
+  }
+
+  const db = new DBTest('DISCORD_TOKEN', { onStatus: () => {}, onText: () => {} })
+  const sent = await db.sendImage('channel-777', Buffer.from('discord-png-bytes'), '附言文字', 'screenshot.png')
+  check('Discord sendImage 成功发送附件', sent === true)
+  check('  包含文件名', discordFormCaptured?.includes('screenshot.png') === true)
+  check('  包含文字内容', discordFormCaptured?.includes('附言文字') === true)
+  check('  包含图片字节', discordFormCaptured?.includes('discord-png-bytes') === true)
+
+  globalThis.fetch = nativeFetch
+  fakeServer.close()
+}
+
+// [10.3] BridgeManager pushImage 全平台策略验证
+{
+  const mockCtx = {
+    agents: { roots: () => [], list: () => [] },
+    effect: () => () => {},
+  }
+  const bm = new BridgeManager(mockCtx, {})
+
+  // (1) Bark: 传二进制 Buffer 应被明确拦截
+  const barkBufRes = await bm.pushImage('bark', 'test-key', Buffer.from('raw-bytes'))
+  check('Bark 拒绝纯二进制并提示需传公网 URL', barkBufRes.ok === false && barkBufRes.detail.includes('only supports public image URLs'))
+
+  // (2) 钉钉: 传二进制 Buffer 应被明确拦截
+  const dtBufRes = await bm.pushImage('dingtalk', 'test-token', Buffer.from('raw-bytes'))
+  check('钉钉 拒绝纯二进制并提示需传公网 URL', dtBufRes.ok === false && dtBufRes.detail.includes('only supports public image URLs'))
+
+  // (3) Server酱: 传二进制 Buffer 应被明确拦截
+  const scBufRes = await bm.pushImage('serverchan', 'test-key', Buffer.from('raw-bytes'))
+  check('Server酱 拒绝纯二进制并提示需传公网 URL', scBufRes.ok === false && scBufRes.detail.includes('only supports public image URLs'))
+
+  // (4) 飞书: 缺少开放平台鉴权凭据应返回协议限制原因
+  const fsRes = await bm.pushImage('feishu', 'webhook-token', Buffer.from('raw-bytes'))
+  check('飞书 返回缺少 tenant_access_token 协议限制说明', fsRes.ok === false && fsRes.detail.includes('tenant_access_token'))
+
+  // (5) QQ: 返回 2025-04-21 协议已下线说明
+  const qqRes = await bm.pushImage('qq', 'openid', Buffer.from('raw-bytes'))
+  check('QQ 返回主动推送已停用说明', qqRes.ok === false && qqRes.detail.includes('2025-04-21'))
+}
+
 eb.stop()
 imapConnections.forEach((s) => s.destroy())
 imapServer.close()

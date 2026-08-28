@@ -236,6 +236,35 @@ export class DiscordBridge {
     }
   }
 
+  /**
+   * 主动推送图片：向指定频道发送图片附件。
+   * @param channelId 目标频道 ID
+   * @param image 图片数据 Buffer
+   * @param content 可选文字说明
+   * @param filename 可选文件名
+   */
+  async sendImage(channelId: string, image: Buffer, content?: string, filename = 'image.png'): Promise<boolean> {
+    try {
+      const form = new FormData()
+      form.append('files[0]', new Blob([new Uint8Array(image)]), filename)
+      if (content) {
+        form.append('payload_json', JSON.stringify({ content: content.slice(0, MSG_LIMIT) }))
+      }
+      const response = await fetch(`${REST}/channels/${encodeURIComponent(channelId)}/messages`, {
+        method: 'POST',
+        headers: { authorization: `Bot ${this.token}` },
+        body: form,
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!response.ok) return false
+      const data = (await response.json()) as { id?: string }
+      return data.id !== undefined
+    } catch (error) {
+      console.error('[dsh-message-gateway] discord sendImage failed', error)
+      return false
+    }
+  }
+
   /** 停止网关连接。 */
   stop(): void {
     this.stopped = true

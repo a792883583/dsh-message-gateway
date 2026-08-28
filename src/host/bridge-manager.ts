@@ -498,6 +498,18 @@ export class BridgeManager {
         const userid = (body.from as { userid?: string } | undefined)?.userid ?? ''
         const chatid = (body.chatid as string | undefined) ?? ''
         const key = chatid !== '' ? `wecom:group:${chatid}` : `wecom:user:${userid}`
+        
+        // 记录最近收到的企业微信目标 ID 到本地临时文件，便于外部配置读取
+        try {
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const os = require('node:os')
+          const target = chatid !== '' ? chatid : userid
+          if (target) {
+            fs.writeFileSync(path.join(os.homedir(), '.dsh', 'latest_wecom_target.txt'), target, 'utf8')
+          }
+        } catch {}
+
         const sink: ReplySink = {
           stream: (f, sid, content, finish) => void this.wecom?.streamReply(f as WsFrame<TextMessage>, sid, content, finish),
           // 企业微信走单一流式消息（ack → 内容 → 定稿同一条消息就地更新）；
@@ -668,6 +680,130 @@ export class BridgeManager {
   }
 
   /**
+   * 主动推送图片：向指定平台的目标会话发送图片。
+   * - wecom-aibot: 自动上传临时素材并发送 image 消息
+   * - telegram: 调用 sendPhoto（支持 Buffer 上传或图片 URL）
+   * - discord: multipart 上传 files[0] 附件
+   * - bark: 支持图片 URL 传入（通过 image 字段富文本横幅展示）
+   * - dingtalk: 支持图片 URL（在 Markdown 中嵌入 ![]()）
+   * - serverchan: 支持图片 URL（在 Markdown desp 中嵌入 ![]()）
+   * - feishu / qq / email / 其它: 对不支持的二进制上传返回明确的官方协议限制原因
+   *
+   * @param platform 平台 id
+   * @param target 目标（wecom-aibot=userid/群ID；telegram=chatId；discord=channelId；bark=deviceKey 等）
+   * @param image 图片数据 Buffer 或可公网访问的图片 URL 字符串
+   * @param opts.caption 可选文字说明
+   * @param opts.filename 可选文件名（默认 image.png）
+   */
+  async pushImage(
+    platform: string,
+    target: string,
+    image: Buffer | string,
+    opts: { caption?: string; filename?: string } = {},
+  ): Promise<{ ok: boolean; detail: string }> {
+    const filename = opts.filename ?? 'image.png'
+    const isUrl = typeof image === 'string' && /^https?:\/\//i.test(image.trim())
+
+    switch (platform) {
+      case 'wecom-aibot': {
+        if (this.wecom === null) return { ok: false, detail: 'wecom-aibot bridge not connected' }
+        if (typeof image === 'string') {
+          // 若传入的是 URL，转为 Buffer 后上传临时素材
+          try {
+            const resp = await fetch(image, { signal: AbortSignal.timeout(20000) })
+            if (!resp.ok) return { ok: false, detail: `failed to fetch image from url: HTTP ${resp.status}` }
+            image = Buffer.from(await resp.arrayBuffer())
+          } catch (err) {
+            return { ok: false, detail: `fetch image url error: ${err instanceof Error ? err.message : String(err)}` }
+          }
+        }
+        const sent = await this.wecom.sendImage(target, image, filename)
+        return sent ? { ok: true, detail: 'sent' } : { ok: false, detail: 'wecom image send failed' }
+      }
+
+      case 'telegram': {
+        if (this.telegram === null) return { ok: false, detail: 'telegram bridge not connected' }
+        const chatId = Number(target)
+        if (!Number.isInteger(chatId) || chatId <= 0) return { ok: false, detail: 'telegram target must be a numeric chatId' }
+        const sent = await this.telegram.sendPhoto(chatId, image, opts.caption, filename)
+        return sent ? { ok: true, detail: 'sent' } : { ok: false, detail: 'telegram photo send failed' }
+      }
+
+      case 'discord': {
+        if (this.discord === null) return { ok: false, detail: 'discord bridge not connected' }
+        let buf: Buffer
+        if (typeof image === 'string') {
+          try {
+            const resp = await fetch(image, { signal: AbortSignal.timeout(20000) })
+            if (!resp.ok) return { ok: false, detail: `failed to fetch image from url: HTTP ${resp.status}` }
+            buf = Buffer.from(await resp.arrayBuffer())
+          } catch (err) {
+            return { ok: false, detail: `fetch image url error: ${err instanceof Error ? err.message : String(err)}` }
+          }
+        } else {
+          buf = image
+        }
+        const sent = await this.discord.sendImage(target, buf, opts.caption, filename)
+        return sent ? { ok: true, detail: 'sent' } : { ok: false, detail: 'discord image send failed' }
+      }
+
+      case 'bark': {
+        // Bark 官方协议要求 image 为可下载的公网 URL
+        if (!isUrl) {
+          return { ok: false, detail: 'Bark only supports public image URLs (pass image as http/https URL string)' }
+        }
+        const { loadStore } = await import('./gateway-store.ts')
+        const store = await loadStore()
+        const server = (store.platforms.bark?.serverUrl || 'https://api.day.app').replace(/\/+$/, '')
+        const deviceKey = target || store.platforms.bark?.deviceKey
+        if (!deviceKey) return { ok: false, detail: 'missing bark device key' }
+        const url = `${server}/${encodeURIComponent(deviceKey)}/`
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            title: opts.caption ?? 'DSH 通知',
+            body: opts.caption ? '' : '收到一张图片',
+            image: image,
+            group: 'DSH',
+          }),
+        })
+        const r = (await resp.json().catch(() => ({}))) as { code?: number; message?: string }
+        return (r.code === 200 || resp.status === 200) ? { ok: true, detail: 'sent' } : { ok: false, detail: r.message ?? 'bark send failed' }
+      }
+
+      case 'dingtalk': {
+        // 钉钉自定义机器人仅支持在 markdown 中以 Markdown 图片语法渲染公网 URL
+        if (!isUrl) {
+          return { ok: false, detail: 'DingTalk custom robot only supports public image URLs via Markdown image tag' }
+        }
+        const caption = opts.caption ?? '图片'
+        const mdText = `${caption ? `${caption}\n\n` : ''}![${filename}](${image})`
+        return this.pushMessage('dingtalk', target, mdText, { title: opts.caption ?? '图片' })
+      }
+
+      case 'serverchan': {
+        // Server酱仅支持在 Markdown desp 中以 Markdown 图片语法嵌入 URL
+        if (!isUrl) {
+          return { ok: false, detail: 'ServerChan only supports public image URLs via Markdown desp' }
+        }
+        const caption = opts.caption ?? '图片'
+        const mdText = `${caption ? `${caption}\n\n` : ''}![${filename}](${image})`
+        return this.pushMessage('serverchan', target, mdText, { title: opts.caption ?? '图片' })
+      }
+
+      case 'feishu':
+        return { ok: false, detail: 'Feishu custom robot webhook does not support binary image upload without tenant_access_token (im/v1/images)' }
+
+      case 'qq':
+        return { ok: false, detail: 'QQ platform has discontinued active push API since 2025-04-21' }
+
+      default:
+        return { ok: false, detail: `platform "${platform}" does not support image push` }
+    }
+  }
+
+  /**
    * 向已配置的 Outbound Webhooks 广播事件（异步投递，失败不阻塞）。
    */
   async broadcastEvent(event: string, payload: Record<string, unknown>): Promise<void> {
@@ -694,8 +830,8 @@ export class BridgeManager {
 
   // ==================== Telegram / Discord / QQ / Email ====================
 
-  private telegram: { start(): void; stop(): void; send(chatId: number, content: string): Promise<boolean>; status: BridgeStatus } | null = null
-  private discord: { start(): void; stop(): void; send(channelId: string, content: string): Promise<boolean>; status: BridgeStatus } | null = null
+  private telegram: { start(): void; stop(): void; send(chatId: number, content: string): Promise<boolean>; sendPhoto(chatId: number, photo: Buffer | string, caption?: string, filename?: string): Promise<boolean>; status: BridgeStatus } | null = null
+  private discord: { start(): void; stop(): void; send(channelId: string, content: string): Promise<boolean>; sendImage(channelId: string, image: Buffer, content?: string, filename?: string): Promise<boolean>; status: BridgeStatus } | null = null
   private qq: { start(): void; stop(): void; status: BridgeStatus } | null = null
   private email: { start(): void; stop(): void; send(to: string, subject: string, content: string): Promise<boolean>; status: BridgeStatus } | null = null
 

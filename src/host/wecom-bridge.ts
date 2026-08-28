@@ -100,6 +100,28 @@ export class WecomBridge {
     }
   }
 
+  /**
+   * 主动向会话发送图片消息（chatid：单聊=userid，群聊=群 ID）。
+   * 内部自动上传临时素材（WeCom uploadMedia）后通过 aibot_send_msg 发送。
+   * @param chatid 接收会话 ID
+   * @param image 图片数据（Buffer）
+   * @param filename 可选文件名（默认 image.png）
+   */
+  async sendImage(chatid: string, image: Buffer, filename = 'image.png'): Promise<boolean> {
+    try {
+      const media = await this.client?.uploadMedia(image, { type: 'image', filename })
+      if (!media?.media_id) {
+        console.error('[dsh-message-gateway] sendImage upload failed: no media_id returned')
+        return false
+      }
+      await this.client?.sendMediaMessage(chatid, 'image', media.media_id)
+      return true
+    } catch (error) {
+      console.error('[dsh-message-gateway] sendImage failed', error)
+      return false
+    }
+  }
+
   /** 回复欢迎语（enter_chat 事件）。 */
   async welcome(frame: WsFrame<EventMessageWith<EnterChatEvent>>, content: string): Promise<void> {
     try {

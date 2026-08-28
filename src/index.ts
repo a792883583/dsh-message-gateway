@@ -99,24 +99,45 @@ export function apply(ctx: Context, config: GatewayConfig = Config({} as Gateway
             type: 'string',
             description: '可选标题（email 作为主题，其他平台作为首行加粗前缀）',
           },
+          image: {
+            type: 'string',
+            description: '可选图片数据：Base64 字符串或公网可访问的 http/https 图片 URL',
+          },
+          filename: {
+            type: 'string',
+            description: '可选图片文件名（如 screenshot.png，默认 image.png）',
+          },
         },
         output: {
           schema: { type: 'string' },
           render: (_args: unknown, value: unknown) => [{ type: 'text', text: String(value) }],
         },
-        async execute(args: { platform: string; target: string; message: string; title?: string }) {
+        async execute(args: { platform: string; target: string; message?: string; title?: string; image?: string; filename?: string }) {
           const platform = String(args.platform ?? '').trim()
           const target = String(args.target ?? '').trim()
           const message = String(args.message ?? '').trim()
           const title = args.title !== undefined ? String(args.title).trim() : undefined
-          if (!platform || !target || !message) {
-            return '错误：platform, target 与 message 均为必填参数'
+          const image = args.image !== undefined ? String(args.image).trim() : undefined
+          const filename = args.filename !== undefined ? String(args.filename).trim() : undefined
+          if (!platform || !target || (!message && !image)) {
+            return '错误：platform、target 为必填，且 message 与 image 至少提供一个'
           }
-          const res = await manager.pushMessage(platform, target, message, { title })
-          if (res.ok) {
-            return `消息已成功推送至 [${platform}] 目标 ${target}`
+          if (message) {
+            const res = await manager.pushMessage(platform, target, message, { title })
+            if (!res.ok) return `文本推送失败：${res.detail}`
           }
-          return `推送失败：${res.detail}`
+          if (image) {
+            let imgPayload: Buffer | string
+            if (/^https?:\/\//i.test(image)) {
+              imgPayload = image
+            } else {
+              const clean = image.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '')
+              imgPayload = Buffer.from(clean, 'base64')
+            }
+            const imgRes = await manager.pushImage(platform, target, imgPayload, { caption: message ? undefined : title, filename })
+            if (!imgRes.ok) return `图片推送失败：${imgRes.detail}`
+          }
+          return `已成功推送至 [${platform}] 目标 ${target}`
         },
       }))
     }

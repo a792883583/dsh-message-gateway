@@ -2,41 +2,50 @@
 
 [中文](README.md) · [English](README.en.md)
 
-Un plugin de pasarela de mensajería para la GUI web de DSH: una entrada "Plataformas de mensajería" debajo del botón "Nueva sesión" abre un gestor a pantalla completa para conectores de mensajería multiplataforma — guardado de credenciales, pruebas de conexión, monitoreo de estado — más un puente persistente integrado para el bot de IA de WeCom: los mensajes externos impulsan al asistente de DSH a través de una sesión de agente dedicada, y las respuestas se transmiten token a token.
+![Vista previa de dsh-message-gateway](assets/screenshot.png)
+
+Un plugin de pasarela de mensajería para la GUI web de DSH: una entrada "Plataformas de mensajería" debajo del botón "Nueva sesión" abre un gestor a pantalla completa para conectores de mensajería multiplataforma — guardado de credenciales, pruebas de conexión, monitoreo de estado — más un puente persistente integrado para el bot de IA de WeCom: los mensajes externos impulsan al asistente de DSH a través de una sesión de agente dedicada, y las respuestas se transmiten token a token. También proporciona una API universal de push proactivo que admite texto Markdown e imágenes nativas.
 
 ## Características
 
 - **Entrada en la barra lateral**: un botón "📮 Plataformas de mensajería" debajo de "Nueva sesión" abre el gestor a pantalla completa (cierre con ESC o haciendo clic en el fondo)
-- **Conectores multiplataforma**: Telegram / Discord / Bot de QQ / WeCom / Bot de IA de WeCom / WeChat (pasarela Wechaty externa) / Cuenta oficial de WeChat / WhatsApp / Email / Webhooks
-  - **Bot de Telegram**: guarde un Bot Token para activar el sondeo largo al instante; chatee directamente con el bot (respuestas en streaming mediante envío + edición progresiva, igual que en la web)
-  - **Bot de Discord**: guarde un Bot Token para conectarse a la pasarela (habilite la intención privilegiada MESSAGE CONTENT en el portal de desarrolladores); chatee en canales o mensajes directos
-  - **Bot de QQ**: guarde appId + secret para conectarse a la pasarela de la plataforma abierta (canales/grupos/DM); respuestas pasivas + edición en streaming
-  - **App de WeCom**: rellene CorpID/AgentID/Secret más el Token/EncodingAESKey de callback, configure la URL de callback (`/gateway/wecom/callback`) en la consola, y los usuarios que escriban al app reciben respuestas automáticas
-  - **Cuenta oficial de WeChat**: rellene AppID/Secret más el Token de callback, configure la URL del servidor (`/gateway/wechat-mp/callback`) en la consola, y los seguidores que escriban reciben respuestas automáticas
-  - **WhatsApp**: rellene Token + Phone Number ID, configure el webhook (`/gateway/whatsapp/webhook`) en la consola de Meta, y los usuarios que escriban reciben respuestas automáticas
-  - **Email**: rellene IMAP (recepción, 993/143) + SMTP (respuesta, 465/587/25); los mensajes se agrupan en sesiones por hilo y las respuestas usan Re: asunto original
-  - **Bot de DingTalk**: configure el Webhook y la clave secreta opcional para notificaciones de grupo
-  - **Bot de Feishu / Lark**: configure el Webhook y la firma secreta para el envío de mensajes
-  - **Bark (iOS)**: ingrese la Device Key para notificaciones instantáneas en dispositivos Apple
-  - **ServerChan**: configure la SendKey para enviar notificaciones a WeChat
+- **Conectores multiplataforma**: Telegram / Discord / Bot de QQ / WeCom / Bot de IA de WeCom / WeChat (pasarela Wechaty externa) / Cuenta oficial de WeChat / WhatsApp / Email / DingTalk / Feishu / Bark / ServerChan / Webhooks
+  - **Bot de IA de WeCom**: rellene `botId + secret` para conexión WebSocket persistente; admite respuestas en streaming, subida de medios y **envío proactivo de imágenes/archivos**
+  - **Bot de Telegram**: guarde un Bot Token para sondeo largo, admite streaming y `sendPhoto` para **envío proactivo de imágenes**
+  - **Bot de Discord**: guarde un Bot Token para conectar vía Gateway, admite canales/DMs y adjuntos `files` para **envío proactivo de imágenes**
+  - **Bot de DingTalk**: configure Webhook y Secret opcional; admite Markdown y URL de imagen pública
+  - **Bot de Feishu / Lark**: configure Webhook y Secret opcional para entrega de mensajes y tarjetas
+  - **Bark (iOS)**: ingrese la Device Key para notificaciones instantáneas con banners de imágenes ricas (URL pública)
+  - **ServerChan**: configure SendKey para notificaciones a WeChat con URLs de imágenes en Markdown
+  - **Bot de QQ**: guarde appId + secret para conectar a la plataforma abierta; respuestas pasivas + edición en streaming
+  - **App de WeCom**: rellene CorpID/AgentID/Secret más Token/EncodingAESKey de callback
+  - **Cuenta oficial de WeChat**: rellene AppID/Secret más Token de callback
+  - **WhatsApp**: rellene Token + Phone Number ID para webhooks de WhatsApp
+  - **Email**: rellene IMAP (993/143) + SMTP (465/587/25) para correos en hilos
+- **Canal de push proactivo universal**: `POST /gateway/push` (para tareas programadas, scripts de automatización y pipelines):
+  - Cuerpo de la petición:
+    - `platform`: plataforma destino (`wecom-aibot` / `telegram` / `discord` / `dingtalk` / `feishu` / `bark` / `serverchan` / `email`)
+    - `target`: destino (userid o grupo para `wecom-aibot`; chatId numérico para `telegram`; channelId para `discord`; deviceKey para `bark`, etc.)
+    - `content`: texto opcional (admite Markdown)
+    - `title`: título opcional (asunto de correo o prefijo de notificación)
+    - `image`: imagen opcional (datos en **Base64** o URL accesible `http(s)://`)
+    - `filename`: nombre de archivo opcional (por defecto `image.png`)
+  - Destacados:
+    - El texto y la imagen se pueden enviar juntos o por separado
+    - `wecom-aibot`, `telegram` y `discord` admiten la carga directa de buffers binarios locales
+    - `bark`, `dingtalk` y `serverchan` se adaptan automáticamente al modo de URL pública
 - **Gestión de credenciales**: el texto plano se guarda solo en `~/.dsh/gateway.json` (modo 600, escritura atómica); `/gateway/list` nunca devuelve credenciales, solo un marcador `configured`
-- **Redacción de secretos**: el contenido de los mensajes escrito en registros / consola se enmascara automáticamente ante posibles secretos (claves con prefijo `sk-`, tokens de GitHub, `Bearer`, asignaciones `password=`, claves PEM privadas y otros patrones comunes), de modo que los secretos de las conversaciones del bot nunca se filtran a los archivos de registro
-- **Pruebas de conexión**: comprobaciones reales por plataforma — Telegram/Discord vía Bot API, QQ vía access_token, WeCom vía gettoken, cuenta oficial vía cgi-bin/token, WhatsApp vía Graph API, Email vía banner TCP de IMAP, Bot de IA de WeCom vía la conexión larga del SDK oficial (autenticado = correcto)
-- **Puente persistente del Bot de IA de WeCom**: conexión larga WebSocket del SDK oficial con reconexión por retroceso exponencial; los mensajes de texto entrantes se inyectan en una sesión de agente dedicada y aislada que despierta al controlador de DSH; las respuestas se transmiten como fragmentos y finalizan vía `response_url`
-  - **Eliminación de menciones @ en grupos**: se quita el `@nombre-del-bot` inicial antes de que el asistente vea el mensaje
-  - **Comandos de barra**: `/help` / `/time` / `/status` (alias en chino: 帮助/菜单/时间/状态)
-  - **Mensaje de bienvenida**: configuración opcional (`welcomeReply`, por defecto `false` para cero interrupciones; al activarse en `true`, responde un saludo cuando un usuario entra al chat individual por primera vez ese día)
-  - **Canal de envío proactivo**: `POST /gateway/send` (`{"chatid": "...", "content": "..."}`, chat individual = userid, grupo = id de grupo) envía mensajes markdown como el bot
-  - **Push proactivo universal**: `POST /gateway/push` (`{"platform": "...", "target": "...", "content": "...", "title": "opcional"}`) envía texto a cualquier plataforma para notificaciones de tareas / otros plugins:
-    - `platform` admite `telegram` (target = chatId numérico), `discord` (target = channelId), `wecom-aibot` (target = userid/id de grupo), `email` (target = correo, title como asunto)
-    - QQ no admite push activo desde el 2025-04-21 (solo respuestas pasivas); devuelve un error claro
-    - una plataforma no conectada devuelve `bridge not connected`
-  - **Reglas de enrutado de mensajes** (configuración del plugin `routes`): enruta mensajes por "plataforma + prefijo de palabra clave" a un **preset de agente** específico (sesión aislada) con un **modelo / skill** opcional. Ej.: `{ id: "code", matchPlatform: "telegram", matchPrefix: "code ", agentPreset: "code" }` hace que `code escribe una función` en Telegram entre en una sesión de preset code. Gana la primera regla que coincida; los mensajes sin coincidencia usan el agente por defecto
-  - **Comandos de barra**: `/help` / `/time` / `/status` / `/stats` (alias en chino: 帮助/菜单/时间/状态/统计); `/stats` muestra el estado de conexión de cada puente y el número de chats activos
-  - **Herramienta de push para agentes** (`send_chat_message`): registra automáticamente una herramienta de envío de mensajes para los agentes de DSH, permitiendo que el asistente envíe resúmenes, resultados o alertas a Telegram, Discord, WeCom o Email directamente desde la conversación
-- **Endpoint de recepción de webhooks**: `POST /gateway/webhook/in` acepta mensajes de sistemas externos (cualquiera de `text` / `content` / `message`), los inyecta en la sesión de agente dedicada y devuelve la respuesta completa de forma síncrona; un secreto de firma HMAC-SHA256 opcional valida las peticiones (contrato: [docs/webhooks.md](docs/webhooks.md))
-- **Cuentas personales de WeChat (pasarela externa opcional)**: inicio de sesión por QR y sondeo de estado contra una pasarela HTTP Wechaty local (contrato: [docs/wechaty-gateway.md](docs/wechaty-gateway.md))
-- **Multilingüe**: chino / inglés / español, siguiendo el idioma de la interfaz web de DSH (los navegadores en español cambian automáticamente); por defecto chino simplificado
+- **Redacción de secretos**: el contenido de los mensajes escrito en registros / consola se enmascara automáticamente ante posibles secretos
+- **Pruebas de conexión**: comprobaciones reales por plataforma — Telegram/Discord vía Bot API, QQ vía access_token, WeCom vía gettoken, cuenta oficial vía cgi-bin/token, WhatsApp vía Graph API, Email vía banner TCP de IMAP, Bot de IA de WeCom vía la conexión larga del SDK oficial
+- **Puente persistente del Bot de IA de WeCom**: conexión larga WebSocket del SDK oficial con reconexión por retroceso exponencial
+  - **Eliminación de menciones @ en grupos**
+  - **Comandos de barra**: `/help` / `/time` / `/status` / `/stats`
+  - **Mensaje de bienvenida opcional**
+  - **Canal de envío proactivo**: `POST /gateway/send`
+  - **Reglas de enrutado de mensajes** (`routes`)
+  - **Herramienta de push para agentes** (`send_chat_message`): registra automáticamente una herramienta para que los agentes envíen resúmenes, resultados o alertas (incluyendo imágenes y capturas de pantalla)
+- **Endpoint de recepción de webhooks**: `POST /gateway/webhook/in`
+- **Multilingüe**: chino / inglés / español, siguiendo el idioma de la interfaz web de DSH
 - Tema claro / oscuro siguiendo la GUI web de DSH
 
 ## Uso

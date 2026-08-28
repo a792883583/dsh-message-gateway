@@ -3,6 +3,7 @@
 /** 支持的平台标识。 */
 export type PlatformId =
   | 'telegram' | 'discord' | 'qq' | 'wecom' | 'wecom-aibot' | 'wechat' | 'wechat-mp' | 'whatsapp' | 'email' | 'webhooks'
+  | 'dingtalk' | 'feishu' | 'bark' | 'serverchan'
 
 /** 平台凭据字段。 */
 export interface PlatformField {

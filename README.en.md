@@ -2,41 +2,50 @@
 
 [中文](README.md) · [Español](README.es.md)
 
-A message-platform gateway plugin for the DSH Web GUI: a "Message platforms" entry below the "New session" button opens a full-screen manager for multi-platform message connectors — credential save, connection tests, status monitoring — plus a built-in persistent bridge for the WeCom AI bot: external messages drive the DSH assistant through a dedicated agent session, and replies stream back token by token.
+![dsh-message-gateway UI Preview](assets/screenshot.png)
+
+A message-platform gateway plugin for the DSH Web GUI: a "Message platforms" entry below the "New session" button opens a full-screen manager for multi-platform message connectors — credential save, connection tests, status monitoring — plus a built-in persistent bridge for the WeCom AI bot: external messages drive the DSH assistant through a dedicated agent session, and replies stream back token by token. Also provides a universal proactive messaging API supporting Markdown text and native image attachments.
 
 ## Features
 
 - **Sidebar entry**: a "📮 Message platforms" button below "New session" opens the full-screen manager (close with ESC or by clicking the backdrop)
-- **Multi-platform connectors**: Telegram / Discord / QQ bot / WeCom / WeCom AI bot / WeChat (external Wechaty gateway) / WeChat Official Account / WhatsApp / Email / Webhooks
-  - **Telegram bot**: save a Bot Token to enable long polling instantly; chat with the bot directly (streaming replies via send + progressive edit, same as web)
-  - **Discord bot**: save a Bot Token to connect to the gateway (enable the MESSAGE CONTENT privileged intent in the developer portal); chat in channels or DMs
-  - **QQ bot**: save appId + secret to connect to the open-platform gateway (channels/groups/DMs); passive replies + streaming edits
-  - **WeCom app**: fill in CorpID/AgentID/Secret plus the callback Token/EncodingAESKey, configure the callback URL (`/gateway/wecom/callback`) in the admin console, and users who message the app get auto replies
-  - **WeChat Official Account**: fill in AppID/Secret plus the callback Token, configure the server URL (`/gateway/wechat-mp/callback`) in the console, and followers who message get auto replies
-  - **WhatsApp**: fill in Token + Phone Number ID, configure the webhook (`/gateway/whatsapp/webhook`) in the Meta console, and users who message get auto replies
-  - **Email**: fill in IMAP (receiving, 993/143) + SMTP (replying, 465/587/25); messages are grouped into per-thread sessions and replies use Re: original subject
-  - **DingTalk Bot**: configure custom bot Webhook & optional HMAC Secret for group notifications
-  - **Feishu / Lark Bot**: configure custom bot Webhook & optional Secret signature for message delivery
-  - **Bark (iOS)**: fill in Device Key for instant push notifications on Apple devices
-  - **ServerChan**: fill in SendKey for push notifications to WeChat / mobile channels
+- **Multi-platform connectors**: Telegram / Discord / QQ bot / WeCom / WeCom AI bot / WeChat (external Wechaty gateway) / WeChat Official Account / WhatsApp / Email / DingTalk / Feishu / Bark / ServerChan / Webhooks
+  - **WeCom AI bot**: fill in `botId + secret` to establish an official SDK WebSocket connection; supports streaming replies, media upload, and **proactive image/file push**
+  - **Telegram bot**: save a Bot Token to enable long polling, supporting text streaming and `sendPhoto` **proactive image push**
+  - **Discord bot**: save a Bot Token to connect via Gateway, supporting channels/DMs and `files` attachment **proactive image push**
+  - **DingTalk Bot**: configure custom bot Webhook & optional HMAC Secret; supports Markdown text and public image URL rendering
+  - **Feishu / Lark Bot**: configure custom bot Webhook & optional Secret signature for text and card delivery
+  - **Bark (iOS)**: fill in Device Key for instant push notifications with rich image banners (public URL)
+  - **ServerChan**: fill in SendKey for push notifications to WeChat / mobile channels with Markdown image URLs
+  - **QQ bot**: save appId + secret to connect to the open-platform gateway; passive replies + streaming edits
+  - **WeCom app**: fill in CorpID/AgentID/Secret plus callback Token/EncodingAESKey for auto-dialogues
+  - **WeChat Official Account**: fill in AppID/Secret plus callback Token for follower dialogues
+  - **WhatsApp**: fill in Token + Phone Number ID for WhatsApp webhook dialogues
+  - **Email**: fill in IMAP (993/143) + SMTP (465/587/25) for threaded email conversations
+- **Universal proactive push channel**: `POST /gateway/push` (for cron jobs, automation scripts, and pipelines):
+  - Request body:
+    - `platform`: target platform (`wecom-aibot` / `telegram` / `discord` / `dingtalk` / `feishu` / `bark` / `serverchan` / `email`)
+    - `target`: destination target (single-chat userid or group id for `wecom-aibot`; numeric chatId for `telegram`; channelId for `discord`; deviceKey for `bark`, etc.)
+    - `content`: optional text content (supports Markdown)
+    - `title`: optional title (email subject or notification prefix)
+    - `image`: optional image data (**Base64** data or accessible `http(s)://` image URL)
+    - `filename`: optional image filename (defaults to `image.png`)
+  - Highlights:
+    - Text and image can be pushed together or separately
+    - `wecom-aibot`, `telegram`, and `discord` support uploading raw local binary buffers directly
+    - `bark`, `dingtalk`, and `serverchan` automatically adapt to public image URLs
 - **Credential management**: plaintext is persisted only to `~/.dsh/gateway.json` (mode 600, atomic write); `/gateway/list` never returns credential plaintext, only a `configured` flag
 - **Secret redaction**: message content written to logs / console is automatically masked for likely secrets (`sk-` prefixed keys, GitHub tokens, `Bearer`, `password=` assignments, PEM private keys, and other common patterns), so secrets in bot conversations never leak into log files
 - **Connection tests**: real per-platform checks — Telegram/Discord via Bot API, QQ via access_token, WeCom via gettoken, WeChat MP via cgi-bin/token, WhatsApp via Graph API, Email via IMAP TCP banner, WeCom AI bot via the official SDK long connection (authenticated = pass)
 - **WeCom AI bot persistent bridge**: official SDK WebSocket long connection with exponential backoff reconnect; incoming text messages are injected into an isolated dedicated agent session that wakes the DSH driver; replies stream back as chunks and finalize via `response_url`
   - **Group-chat @mention stripping**: the leading `@bot-name` is removed before the assistant sees the message
-  - **Slash commands**: `/help` / `/time` / `/status` (Chinese aliases: 帮助/菜单/时间/状态)
+  - **Slash commands**: `/help` / `/time` / `/status` / `/stats` (Chinese aliases: 帮助/菜单/时间/状态/统计)
   - **Enter-chat welcome**: optional configuration (`welcomeReply`, defaults to `false` for zero disturbance; when set to `true`, auto-replies a greeting when a user enters single chat for the first time that day)
-  - **Proactive send channel**: `POST /gateway/send` (`{"chatid": "...", "content": "..."}`, single chat = userid, group chat = group id) sends markdown messages as the bot
-  - **Universal proactive push**: `POST /gateway/push` (`{"platform": "...", "target": "...", "content": "...", "title": "optional"}`) pushes text to any platform target for task notifications / other plugins:
-    - `platform` supports `telegram` (target = numeric chatId), `discord` (target = channelId), `wecom-aibot` (target = userid/group id), `email` (target = address, title becomes the subject)
-    - QQ has no active push since 2025-04-21 (passive replies only); calling it returns a clear error
-    - an unconnected platform returns `bridge not connected`
-  - **Message routing rules** (plugin config `routes`): route messages by "platform + keyword prefix" to a specific **agent preset** (isolated session) with an optional **dedicated model / skill**. E.g. `{ id: "code", matchPlatform: "telegram", matchPrefix: "code ", agentPreset: "code" }` makes `code write a function` on Telegram enter a code-preset session. First matching rule wins; unmatched messages use the default agent
-  - **Slash commands**: `/help` / `/time` / `/status` / `/stats` (Chinese aliases: 帮助/菜单/时间/状态/统计); `/stats` shows per-bridge connection status and active chat count
-  - **Agent push tool** (`send_chat_message`): automatically registers a universal message-pushing tool for DSH agents, allowing AI assistants to proactively send summaries, task results, or alerts to Telegram, Discord, WeCom, or Email directly within conversations
-- **Webhook receive endpoint**: `POST /gateway/webhook/in` accepts messages from external systems (any of `text` / `content` / `message`), injects them into the dedicated agent session and returns the full reply synchronously; an optional HMAC-SHA256 signing secret validates requests (contract: [docs/webhooks.md](docs/webhooks.md))
-- **WeChat personal accounts (optional external gateway)**: QR login and status polling against a local Wechaty HTTP gateway (contract: [docs/wechaty-gateway.md](docs/wechaty-gateway.md))
-- **Multilingual**: Chinese / English / Español, following the DSH Web UI language (Spanish browsers auto-switch); defaults to Simplified Chinese
+  - **Proactive send channel**: `POST /gateway/send` (`{"chatid": "...", "content": "..."}`) sends markdown messages as the bot
+  - **Message routing rules** (plugin config `routes`): route messages by "platform + keyword prefix" to a specific **agent preset** (isolated session) with an optional **dedicated model / skill**
+  - **Agent push tool** (`send_chat_message`): automatically registers a universal message-pushing tool for DSH agents, allowing AI assistants to proactively send summaries, task results, or alerts (including screenshots and text) to WeCom, Telegram, Discord, DingTalk, etc.
+- **Webhook receive endpoint**: `POST /gateway/webhook/in` accepts messages from external systems, injects them into the dedicated agent session and returns the full reply synchronously; optional HMAC-SHA256 signature validation
+- **Multilingual**: Chinese / English / Español, following the DSH Web UI language; defaults to Simplified Chinese
 - Light / dark theme follows the DSH Web GUI
 
 ## Usage
