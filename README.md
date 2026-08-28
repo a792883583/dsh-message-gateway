@@ -15,6 +15,10 @@ DSH Web GUI 的消息平台网关插件：在侧边栏「新会话」按钮下�
   - **微信公众号**：填 AppID/Secret + 回调 Token，后台配置服务器 URL（`/gateway/wechat-mp/callback`）后发消息即自动对话
   - **WhatsApp**：填 Token + Phone Number ID，Meta 后台配置 Webhook（`/gateway/whatsapp/webhook`）后发消息即自动对话
   - **Email**：填 IMAP（收件，993/143）+ SMTP（回复，465/587/25），按邮件线程自动归类会话，回复用 Re: 原主题
+  - **钉钉群机器人**：配置自定义机器人 Webhook 与可选加签密钥（Secret），支持实时推送与群消息通知
+  - **飞书群机器人**：配置自定义机器人 Webhook 与可选签名密钥（Secret），支持标准文本与卡片推送
+  - **Bark (iOS)**：填入 Device Key，实现手机秒级弹窗通知推送
+  - **Server酱 (Turbo版)**：填入 SendKey，支持将通知推送至微信 / 手机服务号
 - **凭据管理**：明文只落盘 `~/.dsh/gateway.json`（权限 600，原子写入），`/gateway/list` 永不回传凭据明文，只返回 configured 标记
 - **敏感信息脱敏**：写入日志 / 控制台的消息内容自动遮蔽疑似密钥（`sk-` 前缀、GitHub token、`Bearer`、`password=` 赋值、私钥 PEM 等通用模式），机器人对话里的机密不会泄露到日志文件
 - **连接测试**：每个平台独立的真实连接测试——Telegram/Discord 走 Bot API、QQ 走 access_token、企微走 gettoken、微信公众号走 cgi-bin/token、WhatsApp 走 Graph API、Email 走 IMAP TCP banner、企微智能机器人走官方 SDK 长连接（认证成功即通过）

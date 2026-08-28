@@ -15,6 +15,10 @@ Un plugin de pasarela de mensajería para la GUI web de DSH: una entrada "Plataf
   - **Cuenta oficial de WeChat**: rellene AppID/Secret más el Token de callback, configure la URL del servidor (`/gateway/wechat-mp/callback`) en la consola, y los seguidores que escriban reciben respuestas automáticas
   - **WhatsApp**: rellene Token + Phone Number ID, configure el webhook (`/gateway/whatsapp/webhook`) en la consola de Meta, y los usuarios que escriban reciben respuestas automáticas
   - **Email**: rellene IMAP (recepción, 993/143) + SMTP (respuesta, 465/587/25); los mensajes se agrupan en sesiones por hilo y las respuestas usan Re: asunto original
+  - **Bot de DingTalk**: configure el Webhook y la clave secreta opcional para notificaciones de grupo
+  - **Bot de Feishu / Lark**: configure el Webhook y la firma secreta para el envío de mensajes
+  - **Bark (iOS)**: ingrese la Device Key para notificaciones instantáneas en dispositivos Apple
+  - **ServerChan**: configure la SendKey para enviar notificaciones a WeChat
 - **Gestión de credenciales**: el texto plano se guarda solo en `~/.dsh/gateway.json` (modo 600, escritura atómica); `/gateway/list` nunca devuelve credenciales, solo un marcador `configured`
 - **Redacción de secretos**: el contenido de los mensajes escrito en registros / consola se enmascara automáticamente ante posibles secretos (claves con prefijo `sk-`, tokens de GitHub, `Bearer`, asignaciones `password=`, claves PEM privadas y otros patrones comunes), de modo que los secretos de las conversaciones del bot nunca se filtran a los archivos de registro
 - **Pruebas de conexión**: comprobaciones reales por plataforma — Telegram/Discord vía Bot API, QQ vía access_token, WeCom vía gettoken, cuenta oficial vía cgi-bin/token, WhatsApp vía Graph API, Email vía banner TCP de IMAP, Bot de IA de WeCom vía la conexión larga del SDK oficial (autenticado = correcto)

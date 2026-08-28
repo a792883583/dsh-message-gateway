@@ -15,6 +15,10 @@ A message-platform gateway plugin for the DSH Web GUI: a "Message platforms" ent
   - **WeChat Official Account**: fill in AppID/Secret plus the callback Token, configure the server URL (`/gateway/wechat-mp/callback`) in the console, and followers who message get auto replies
   - **WhatsApp**: fill in Token + Phone Number ID, configure the webhook (`/gateway/whatsapp/webhook`) in the Meta console, and users who message get auto replies
   - **Email**: fill in IMAP (receiving, 993/143) + SMTP (replying, 465/587/25); messages are grouped into per-thread sessions and replies use Re: original subject
+  - **DingTalk Bot**: configure custom bot Webhook & optional HMAC Secret for group notifications
+  - **Feishu / Lark Bot**: configure custom bot Webhook & optional Secret signature for message delivery
+  - **Bark (iOS)**: fill in Device Key for instant push notifications on Apple devices
+  - **ServerChan**: fill in SendKey for push notifications to WeChat / mobile channels
 - **Credential management**: plaintext is persisted only to `~/.dsh/gateway.json` (mode 600, atomic write); `/gateway/list` never returns credential plaintext, only a `configured` flag
 - **Secret redaction**: message content written to logs / console is automatically masked for likely secrets (`sk-` prefixed keys, GitHub tokens, `Bearer`, `password=` assignments, PEM private keys, and other common patterns), so secrets in bot conversations never leak into log files
 - **Connection tests**: real per-platform checks — Telegram/Discord via Bot API, QQ via access_token, WeCom via gettoken, WeChat MP via cgi-bin/token, WhatsApp via Graph API, Email via IMAP TCP banner, WeCom AI bot via the official SDK long connection (authenticated = pass)

@@ -577,6 +577,89 @@ export class BridgeManager {
         const sent = await this.email.send(target, subject, content)
         return sent ? { ok: true, detail: 'sent' } : { ok: false, detail: 'email send failed' }
       }
+      case 'dingtalk': {
+        // 钉钉自定义机器人 Webhook 推送
+        const rawUrl = target.startsWith('http') ? target : `https://oapi.dingtalk.com/robot/send?access_token=${encodeURIComponent(target)}`
+        let targetUrl = rawUrl
+        // 自动查找保存的 secret
+        const { loadStore } = await import('./gateway-store.ts')
+        const store = await loadStore()
+        const secret = store.platforms.dingtalk?.secret
+        if (secret) {
+          const { createHmac } = await import('node:crypto')
+          const timestamp = Date.now()
+          const stringToSign = `${timestamp}\n${secret}`
+          const sign = encodeURIComponent(createHmac('sha256', secret).update(stringToSign, 'utf8').digest('base64'))
+          targetUrl += `${rawUrl.includes('?') ? '&' : '?'}timestamp=${timestamp}&sign=${sign}`
+        }
+        const resp = await fetch(targetUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            msgtype: 'markdown',
+            markdown: { title: opts.title ?? 'DSH 通知', text: text },
+          }),
+        })
+        const r = (await resp.json().catch(() => ({}))) as { errcode?: number; errmsg?: string }
+        return r.errcode === 0 ? { ok: true, detail: 'sent' } : { ok: false, detail: r.errmsg ?? 'dingtalk send failed' }
+      }
+      case 'feishu': {
+        // 飞书自定义机器人 Webhook 推送
+        const rawUrl = target.startsWith('http') ? target : `https://open.feishu.cn/open-apis/bot/v2/hook/${encodeURIComponent(target)}`
+        const payload: Record<string, unknown> = {
+          msg_type: 'text',
+          content: { text: text },
+        }
+        const { loadStore } = await import('./gateway-store.ts')
+        const store = await loadStore()
+        const secret = store.platforms.feishu?.secret
+        if (secret) {
+          const { createHmac } = await import('node:crypto')
+          const timestamp = Math.floor(Date.now() / 1000)
+          const stringToSign = `${timestamp}\n${secret}`
+          const sign = createHmac('sha256', stringToSign).digest('base64')
+          payload.timestamp = String(timestamp)
+          payload.sign = sign
+        }
+        const resp = await fetch(rawUrl, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const r = (await resp.json().catch(() => ({}))) as { code?: number; msg?: string; StatusCode?: number }
+        return (r.code === 0 || r.StatusCode === 0) ? { ok: true, detail: 'sent' } : { ok: false, detail: r.msg ?? 'feishu send failed' }
+      }
+      case 'bark': {
+        // Bark iOS 推送
+        const { loadStore } = await import('./gateway-store.ts')
+        const store = await loadStore()
+        const server = (store.platforms.bark?.serverUrl || 'https://api.day.app').replace(/\/+$/, '')
+        const deviceKey = target || store.platforms.bark?.deviceKey
+        if (!deviceKey) return { ok: false, detail: 'missing bark device key' }
+        const url = `${server}/${encodeURIComponent(deviceKey)}/`
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ title: opts.title ?? 'DSH 通知', body: content, group: 'DSH' }),
+        })
+        const r = (await resp.json().catch(() => ({}))) as { code?: number; message?: string }
+        return (r.code === 200 || resp.status === 200) ? { ok: true, detail: 'sent' } : { ok: false, detail: r.message ?? 'bark send failed' }
+      }
+      case 'serverchan': {
+        // Server酱 Turbo 版推送
+        const { loadStore } = await import('./gateway-store.ts')
+        const store = await loadStore()
+        const sendKey = target || store.platforms.serverchan?.sendKey
+        if (!sendKey) return { ok: false, detail: 'missing serverchan sendkey' }
+        const url = `https://sctapi.ftqq.com/${encodeURIComponent(sendKey)}.send`
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ title: (opts.title ?? 'DSH 通知').slice(0, 32), desp: content }),
+        })
+        const r = (await resp.json().catch(() => ({}))) as { code?: number; message?: string }
+        return r.code === 0 ? { ok: true, detail: 'sent' } : { ok: false, detail: r.message ?? 'serverchan send failed' }
+      }
       case 'qq':
         return { ok: false, detail: 'QQ 平台自 2025-04-21 起不支持主动推送（仅被动回复），无法发送主动消息' }
       default:

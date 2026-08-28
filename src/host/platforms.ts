@@ -112,6 +112,49 @@ export const PLATFORMS: PlatformDef[] = [
     ],
   },
   {
+    id: 'dingtalk',
+    nameKey: 'platform.dingtalk',
+    icon: '📌',
+    testable: true,
+    hintKey: 'platform.dingtalk.hint',
+    fields: [
+      { key: 'webhookUrl', labelKey: 'field.webhookUrl', placeholderKey: 'field.dingtalkWebhook.ph', kind: 'text' },
+      { key: 'secret', labelKey: 'field.dingtalkSecret', placeholderKey: 'field.secret.ph', kind: 'secret' },
+    ],
+  },
+  {
+    id: 'feishu',
+    nameKey: 'platform.feishu',
+    icon: '🕊️',
+    testable: true,
+    hintKey: 'platform.feishu.hint',
+    fields: [
+      { key: 'webhookUrl', labelKey: 'field.webhookUrl', placeholderKey: 'field.feishuWebhook.ph', kind: 'text' },
+      { key: 'secret', labelKey: 'field.feishuSecret', placeholderKey: 'field.secret.ph', kind: 'secret' },
+    ],
+  },
+  {
+    id: 'bark',
+    nameKey: 'platform.bark',
+    icon: '🔔',
+    testable: true,
+    hintKey: 'platform.bark.hint',
+    fields: [
+      { key: 'serverUrl', labelKey: 'field.barkServer', placeholderKey: 'field.barkServer.ph', kind: 'text' },
+      { key: 'deviceKey', labelKey: 'field.barkKey', placeholderKey: 'field.barkKey.ph', kind: 'secret' },
+    ],
+  },
+  {
+    id: 'serverchan',
+    nameKey: 'platform.serverchan',
+    icon: '🚀',
+    testable: true,
+    hintKey: 'platform.serverchan.hint',
+    fields: [
+      { key: 'sendKey', labelKey: 'field.serverchanKey', placeholderKey: 'field.serverchanKey.ph', kind: 'secret' },
+    ],
+  },
+  {
     id: 'webhooks',
     nameKey: 'platform.webhooks',
     icon: '🪝',
@@ -243,6 +286,84 @@ export async function testPlatform(id: string, cred: Record<string, string>): Pr
         return { ok: true, detail: banner }
       }
       return { ok: false, detail: banner === '' ? `无法连接 ${cred.imapHost}:${port}` : banner }
+    }
+    case 'dingtalk': {
+      // 钉钉自定义机器人 Webhook 测试（发送一条轻量测试验证消息）
+      const rawUrl = cred.webhookUrl ?? ''
+      if (!rawUrl.startsWith('http')) return { ok: false, detail: '无效的 Webhook URL' }
+      let targetUrl = rawUrl
+      if (cred.secret) {
+        const { createHmac } = await import('node:crypto')
+        const timestamp = Date.now()
+        const stringToSign = `${timestamp}\n${cred.secret}`
+        const sign = encodeURIComponent(createHmac('sha256', cred.secret).update(stringToSign, 'utf8').digest('base64'))
+        targetUrl += `${rawUrl.includes('?') ? '&' : '?'}timestamp=${timestamp}&sign=${sign}`
+      }
+      const { status, body } = await httpJson(targetUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          msgtype: 'markdown',
+          markdown: { title: 'DSH 连接测试', text: '### 🔌 DSH Message Gateway\n钉钉自定义机器人连接测试成功！' },
+        }),
+      })
+      const r = body as { errcode?: number; errmsg?: string }
+      if (r.errcode === 0) return { ok: true, detail: '钉钉机器人连接成功' }
+      return { ok: false, detail: r.errmsg ?? `HTTP ${status}` }
+    }
+    case 'feishu': {
+      // 飞书自定义机器人 Webhook 测试
+      const rawUrl = cred.webhookUrl ?? ''
+      if (!rawUrl.startsWith('http')) return { ok: false, detail: '无效的 Webhook URL' }
+      const payload: Record<string, unknown> = {
+        msg_type: 'text',
+        content: { text: '🔌 [DSH Message Gateway] 飞书自定义机器人连接测试成功！' },
+      }
+      if (cred.secret) {
+        const { createHmac } = await import('node:crypto')
+        const timestamp = Math.floor(Date.now() / 1000)
+        const stringToSign = `${timestamp}\n${cred.secret}`
+        const sign = createHmac('sha256', stringToSign).digest('base64')
+        payload.timestamp = String(timestamp)
+        payload.sign = sign
+      }
+      const { status, body } = await httpJson(rawUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const r = body as { code?: number; msg?: string; StatusCode?: number }
+      if (r.code === 0 || r.StatusCode === 0) return { ok: true, detail: '飞书机器人连接成功' }
+      return { ok: false, detail: r.msg ?? `HTTP ${status}` }
+    }
+    case 'bark': {
+      // Bark iOS 推送测试
+      const server = (cred.serverUrl || 'https://api.day.app').replace(/\/+$/, '')
+      const key = cred.deviceKey ?? ''
+      if (!key) return { ok: false, detail: '请填写 Device Key' }
+      const url = `${server}/${encodeURIComponent(key)}/`
+      const { status, body } = await httpJson(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'DSH 连接测试', body: 'Bark 手机推送通道已连通', group: 'DSH' }),
+      })
+      const r = body as { code?: number; message?: string }
+      if (r.code === 200 || status === 200) return { ok: true, detail: 'Bark 推送测试成功' }
+      return { ok: false, detail: r.message ?? `HTTP ${status}` }
+    }
+    case 'serverchan': {
+      // Server酱 Turbo 版推送测试
+      const key = cred.sendKey ?? ''
+      if (!key) return { ok: false, detail: '请填写 SendKey' }
+      const url = `https://sctapi.ftqq.com/${encodeURIComponent(key)}.send`
+      const { status, body } = await httpJson(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'DSH连接测试', desp: 'Server酱消息通道测试成功' }),
+      })
+      const r = body as { code?: number; message?: string }
+      if (r.code === 0) return { ok: true, detail: 'Server酱推送测试成功' }
+      return { ok: false, detail: r.message ?? `HTTP ${status}` }
     }
     default:
       return { ok: true, detail: 'configured' }
