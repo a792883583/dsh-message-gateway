@@ -431,19 +431,6 @@ export function registerGatewayRoutes(ctx: Context, manager: BridgeManager): () 
           json(res, { ok: true, value: { sent: true } })
           return
         }
-        if (path === '/gateway/recent-target') {
-          // 获取最近向机器人发消息的发送者 ID（单聊=userid，群聊=chatid）
-          const fs = await import('node:fs')
-          const pathModule = await import('node:path')
-          const os = await import('node:os')
-          const targetFile = pathModule.join(os.homedir(), '.dsh', 'latest_wecom_target.txt')
-          let target = ''
-          try {
-            target = fs.readFileSync(targetFile, 'utf8').trim()
-          } catch {}
-          json(res, { ok: true, value: { target } })
-          return
-        }
         if (path === '/gateway/send') {
           // 主动发送通道：以机器人身份向会话发送 markdown 消息（单聊=userid，群聊=群 ID）。
           const body = payload as { chatid?: unknown; content?: unknown } | null

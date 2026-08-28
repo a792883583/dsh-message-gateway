@@ -498,18 +498,6 @@ export class BridgeManager {
         const userid = (body.from as { userid?: string } | undefined)?.userid ?? ''
         const chatid = (body.chatid as string | undefined) ?? ''
         const key = chatid !== '' ? `wecom:group:${chatid}` : `wecom:user:${userid}`
-        
-        // 记录最近收到的企业微信目标 ID 到本地临时文件，便于外部配置读取
-        try {
-          const fs = require('node:fs')
-          const path = require('node:path')
-          const os = require('node:os')
-          const target = chatid !== '' ? chatid : userid
-          if (target) {
-            fs.writeFileSync(path.join(os.homedir(), '.dsh', 'latest_wecom_target.txt'), target, 'utf8')
-          }
-        } catch {}
-
         const sink: ReplySink = {
           stream: (f, sid, content, finish) => void this.wecom?.streamReply(f as WsFrame<TextMessage>, sid, content, finish),
           // 企业微信走单一流式消息（ack → 内容 → 定稿同一条消息就地更新）；
