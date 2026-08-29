@@ -128,9 +128,14 @@ export class BridgeManager {
         return
       }
       if (event.type === 'turn/end') {
-        // 兜底定稿：有内容且未收到 assistant/message 时结束流；空则继续等下一轮。
-        if (p.buffer !== '' && p.pushed) {
+        // 轮次结束：如果有累积的流式正文，定稿推送；如果正文为空且从未产生内容，回复完成提示收尾。
+        if (p.buffer !== '') {
           void this.pushStream(p, true)
+          this.finishPending(key)
+          return
+        } else {
+          // 产生空结果（如纯后台操作/工具执行完毕）收尾
+          id.sink.stream(id.frame, p.streamId, '✅ 处理完成', true)
           this.finishPending(key)
           return
         }
@@ -418,10 +423,10 @@ export class BridgeManager {
         if (this.pendingMap.get(id.key) !== p) return
         this.pollPending(id.key, p, session)
       }, 400)
-      // 兜底超时（10 分钟无完成事件 → 清理）。
+      // 兜底超时（2 分钟无完成事件 → 强制超时收尾清理）。
       p.fallback = setTimeout(() => {
         if (this.pendingMap.get(id.key) === p) this.finishPending(id.key)
-      }, 10 * 60 * 1000)
+      }, 2 * 60 * 1000)
       p.fallback.unref?.()
     } catch (error) {
       console.error('[dsh-message-gateway] handleExternalMessage failed', error)
