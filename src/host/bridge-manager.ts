@@ -128,14 +128,9 @@ export class BridgeManager {
         return
       }
       if (event.type === 'turn/end') {
-        // 轮次结束：如果有累积的流式正文，定稿推送；如果正文为空且从未产生内容，回复完成提示收尾。
+        // 轮次结束收尾
         if (p.buffer !== '') {
           void this.pushStream(p, true)
-          this.finishPending(key)
-          return
-        } else {
-          // 产生空结果（如纯后台操作/工具执行完毕）收尾
-          id.sink.stream(id.frame, p.streamId, '✅ 处理完成', true)
           this.finishPending(key)
           return
         }
@@ -187,7 +182,7 @@ export class BridgeManager {
       p.heartbeat = null
     }
     this.pendingMap.delete(key)
-    // 只发过「正在处理…」但从未产出内容 → 以超时文案收尾流式消息。
+    // 只发过「正在处理…」但从未产出内容 → 以超时文案收尾流式消息并结束 finish=true。
     if (p.ackSent && !p.pushed) {
       void p.sink.stream(p.frame, p.streamId, this.t('timeout'), true)
     }
