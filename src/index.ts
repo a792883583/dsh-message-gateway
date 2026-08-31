@@ -15,7 +15,7 @@ import { BridgeManager } from './host/bridge-manager.ts'
 import { loadStore } from './host/gateway-store.ts'
 import { registerGatewayRoutes } from './host/routes.ts'
 import { Config, type GatewayConfig } from './core/config.ts'
-import { WecomSmartsheetClient } from './host/wecom-smartsheet.ts'
+import { WecomSmartsheetClient, type CreateSmartsheetOptions, type CreateSmartsheetResult, type SmartsheetFieldDef } from './host/wecom-smartsheet.ts'
 import { TelegramBridge } from './host/telegram-bridge.ts'
 import { DiscordBridge } from './host/discord-bridge.ts'
 import { QQBridge, QqWebhookBridge } from './host/qq-bridge.ts'
@@ -38,8 +38,9 @@ export {
   WecomAppBridge, WechatMpBridge, WhatsappBridge,
   sha1Sorted, xmlField, xmlEncrypt, CALLBACK_PATHS,
   PLATFORMS, platformDef, testPlatform,
+  WecomSmartsheetClient,
 }
-export type { GatewayConfig }
+export type { GatewayConfig, CreateSmartsheetOptions, CreateSmartsheetResult, SmartsheetFieldDef }
 
 /** 挂载网关路由并启动已配置平台的常驻桥。 */
 export function apply(ctx: Context, config: GatewayConfig = Config({} as GatewayConfig) as GatewayConfig): void {
