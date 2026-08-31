@@ -15,6 +15,7 @@ import { BridgeManager } from './host/bridge-manager.ts'
 import { loadStore } from './host/gateway-store.ts'
 import { registerGatewayRoutes } from './host/routes.ts'
 import { Config, type GatewayConfig } from './core/config.ts'
+import { WecomSmartsheetClient } from './host/wecom-smartsheet.ts'
 import { TelegramBridge } from './host/telegram-bridge.ts'
 import { DiscordBridge } from './host/discord-bridge.ts'
 import { QQBridge, QqWebhookBridge } from './host/qq-bridge.ts'
@@ -73,10 +74,10 @@ export function apply(ctx: Context, config: GatewayConfig = Config({} as Gateway
       }
     })
     const disposeRoutes = registerGatewayRoutes(ctx, manager)
-    // 注册通用 Agent 消息推送工具 send_chat_message
-    let disposeTool: (() => void) | undefined
+    // 注册通用 Agent 工具：① send_chat_message ② wecom_create_smartsheet
+    let disposeTools: (() => void) | undefined
     if (ctx.tools) {
-      disposeTool = ctx.tools.register(defineTool({
+      const disposeSend = ctx.tools.register(defineTool({
         name: 'send_chat_message',
         description: '向已连接的消息平台（Telegram / Discord / 企业微信智能机器人 / Email 等）主动推送文本消息。例如把代码总结、任务结果推送至指定的群聊或私信频道。',
         parameters: {
@@ -140,9 +141,77 @@ export function apply(ctx: Context, config: GatewayConfig = Config({} as Gateway
           return `已成功推送至 [${platform}] 目标 ${target}`
         },
       }))
+
+      const disposeSmartsheet = ctx.tools.register(defineTool({
+        name: 'wecom_create_smartsheet',
+        description: '在企业微信中创建一份全新的在线智能表格（Smartsheet），支持定义表格标题、字段列（文本/单选/多选/人员/日期/数字等）与初始数据行，并返回智能表格在线访问链接。',
+        parameters: {
+          title: {
+            type: 'string',
+            required: true,
+            description: '智能表格文档标题（如：2026年Q3项目开发排期表）',
+          },
+          sheetTitle: {
+            type: 'string',
+            description: '首个工作表名称（默认：数据表）',
+          },
+          fields: {
+            type: 'array',
+            description: '列字段定义列表，如 [{"title": "任务名称", "type": "text"}, {"title": "状态", "type": "single_select", "options": ["待办", "进行中", "已完成"]}]',
+          },
+          records: {
+            type: 'array',
+            description: '初始填入的数据行列表，如 [{"任务名称": "需求评审", "状态": "已完成"}]',
+          },
+        },
+        output: {
+          schema: { type: 'string' },
+          render: (_args: unknown, value: unknown) => [{ type: 'text', text: String(value) }],
+        },
+        async execute(args: {
+          title: string
+          sheetTitle?: string
+          fields?: Array<{ title: string; type?: string; options?: string[] }>
+          records?: Array<Record<string, unknown>>
+        }) {
+          const title = String(args.title ?? '').trim()
+          if (!title) return '错误：表格标题 title 为必填项'
+
+          // 从已保存的凭据中提取企业微信凭据
+          const store = await loadStore()
+          const wecomCred = store.platforms['wecom-aibot'] || store.platforms['wecom']
+          if (!wecomCred || (!wecomCred.secret && !wecomCred.corpId && !wecomCred.botId)) {
+            return '错误：未在消息平台中配置企业微信凭据，请先在侧边栏「消息平台」中配置企业微信智能机器人或自建应用凭据'
+          }
+
+          const client = new WecomSmartsheetClient({
+            botId: wecomCred.botId,
+            secret: wecomCred.secret,
+            corpId: wecomCred.corpId,
+          })
+
+          const res = await client.createSmartsheet({
+            title,
+            sheetTitle: args.sheetTitle,
+            fields: args.fields as any,
+            records: args.records,
+          })
+
+          if (!res.ok) {
+            return `创建智能表格失败：${res.error}`
+          }
+
+          return `✅ 智能表格「${title}」创建成功！\n- 文档 ID: ${res.docid}\n- 在线访问链接: ${res.url}`
+        },
+      }))
+
+      disposeTools = () => {
+        disposeSend()
+        disposeSmartsheet()
+      }
     }
     return () => {
-      disposeTool?.()
+      disposeTools?.()
       disposeRoutes()
       void manager.dispose()
     }

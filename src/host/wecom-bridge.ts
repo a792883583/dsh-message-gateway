@@ -1,5 +1,5 @@
 /**
- * 企业微信智能机器人常驻桥接：SDK 长连接生命周期管理 + 消息事件回调。
+ * 企业微信智能机器人常驻桥接：SDK 长连接生命周期管理 + 消息事件回调 + 智能表格 REST API 对接。
  * 与「连接测试」（临时连接即断）不同，本桥在插件生命周期内保持连接，
  * 接收消息并转发给会话层（见 bridge-manager）。
  * @module dsh-message-gateway/host/wecom-bridge
@@ -7,6 +7,7 @@
 
 import AiBot, { WSClient } from '@wecom/aibot-node-sdk'
 import type { EventMessageWith, EnterChatEvent, WsFrame, TextMessage } from '@wecom/aibot-node-sdk'
+import { WecomSmartsheetClient, type CreateSmartsheetOptions, type CreateSmartsheetResult } from './wecom-smartsheet.ts'
 
 export interface BridgeStatus {
   state: 'idle' | 'connecting' | 'connected' | 'error'
@@ -25,21 +26,47 @@ export interface WecomBridgeCallbacks {
 /** 常驻连接管理。 */
 export class WecomBridge {
   private client: WSClient | null = null
+  private smartsheetClient: WecomSmartsheetClient | null = null
   private started = false
   status: BridgeStatus = { state: 'idle', detail: '', connectedAt: null }
 
   constructor(
     private readonly cred: { botId: string; secret: string },
     private readonly callbacks: WecomBridgeCallbacks,
-  ) {}
+  ) {
+    this.smartsheetClient = new WecomSmartsheetClient({
+      botId: cred.botId,
+      secret: cred.secret,
+    })
+  }
 
   private setStatus(state: BridgeStatus['state'], detail = ''): void {
     this.status = {
       state,
       detail,
-      connectedAt: state === 'connected' ? Date.now() : this.status.connectedAt,
+      connectedAt: state === 'connected' ? (this.status.connectedAt ?? Date.now()) : null,
     }
     this.callbacks.onStatus(this.status)
+  }
+
+  /** 获取智能表格操作客户端 */
+  getSmartsheetClient(): WecomSmartsheetClient | null {
+    return this.smartsheetClient
+  }
+
+  /** 获取底层已认证连接的 WSClient 实例 */
+  getClient(): WSClient | null {
+    return this.client
+  }
+
+  /**
+   * 创建企业微信智能表格。
+   */
+  async createSmartsheet(options: CreateSmartsheetOptions): Promise<CreateSmartsheetResult> {
+    if (!this.smartsheetClient) {
+      return { ok: false, error: '企业微信智能表格客户端未初始化' }
+    }
+    return await this.smartsheetClient.createSmartsheet(options)
   }
 
   /** 建立常驻连接（断线由 SDK 自动指数退避重连）。 */
@@ -49,7 +76,9 @@ export class WecomBridge {
     this.setStatus('connecting')
     const client = new WSClient({ botId: this.cred.botId, secret: this.cred.secret })
     this.client = client
-    client.on('authenticated', () => this.setStatus('connected', `botId ${this.cred.botId}`))
+    client.on('authenticated', () => {
+      this.setStatus('connected', `botId ${this.cred.botId}`)
+    })
     client.on('message.text', (frame: WsFrame<TextMessage>) => {
       const content = frame.body?.text?.content ?? ''
       if (content.trim() !== '') this.callbacks.onText(content, frame)
