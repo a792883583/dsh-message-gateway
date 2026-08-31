@@ -158,10 +158,26 @@ export function apply(ctx: Context, config: GatewayConfig = Config({} as Gateway
           },
           fields: {
             type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                title: { type: 'string', required: true },
+                type: {
+                  type: 'string',
+                  enum: ['text', 'number', 'single_select', 'multi_select', 'date_time', 'user', 'checkbox'],
+                },
+                options: { type: 'array', items: { type: 'string' } },
+              },
+              additionalProperties: false,
+            },
             description: '列字段定义列表，如 [{"title": "任务名称", "type": "text"}, {"title": "状态", "type": "single_select", "options": ["待办", "进行中", "已完成"]}]',
           },
           records: {
             type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: true,
+            },
             description: '初始填入的数据行列表，如 [{"任务名称": "需求评审", "状态": "已完成"}]',
           },
         },
