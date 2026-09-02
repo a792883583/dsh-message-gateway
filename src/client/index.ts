@@ -28,10 +28,11 @@ const NEW_SESSION_SELECTOR = '[class*="newSession"]'
 
 const BUTTON_STYLE = `
 .dsh-gw-open { display:flex; align-items:center; gap:8px; width:100%; padding:8px 12px;
-  border:none; background:transparent; color:var(--dsh-git-panel-fg, #24292f); cursor:pointer;
-  font-size:12px; font-weight:500; border-radius:8px; }
+  border:none; background:transparent; color:inherit; cursor:pointer;
+  font-size:12px; font-weight:500; border-radius:8px; margin-top:2px; box-sizing:border-box;
+  transition: all 0.15s ease; }
 .dsh-gw-open:hover { background:rgba(128,128,128,0.1); }
-.dsh-gw-open .icon { font-size:15px; flex:none; }
+.dsh-gw-open .icon { font-size:15px; flex:none; display:flex; align-items:center; justify-content:center; }
 .dsh-gw-open .label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
   white-space:nowrap; text-align:left; }
 `
