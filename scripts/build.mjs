@@ -45,6 +45,7 @@ await Promise.all([
       '@deepseek-ai/cordis',
       '@deepseek-ai/dsh-host-webserver',
       '@deepseek-ai/dsh-subprocess',
+      '@deepseek-ai/dsh-tools',
       '@deepseek-ai/dsh-workspace',
       '@deepseek-ai/schemastery',
       '@deepseek-ai/dsh-agent',
