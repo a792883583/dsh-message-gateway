@@ -2,6 +2,12 @@
 
 本文件记录 `dsh-message-gateway` 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.1.25] - 2026-09-07
+
+### Fixed
+
+- **typecheck 修复**：`wecom_create_smartsheet` 工具向 `WecomSmartsheetClient` 传入了其构造函数签名中不存在的 `corpId`，导致 `npm run typecheck` 报错；现移除该多余属性，并对仅配置自建应用（corpId）凭据的情况返回明确的中文错误提示（当前底层 `@wecom/cli` 仅支持智能机器人 botId + secret 授权）
+
 ## [0.1.24] - 2026-09-04
 
 ### Fixed

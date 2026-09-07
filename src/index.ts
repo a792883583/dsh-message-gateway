@@ -200,11 +200,14 @@ export function apply(ctx: Context, config: GatewayConfig = Config({} as Gateway
           if (!wecomCred || (!wecomCred.secret && !wecomCred.corpId && !wecomCred.botId)) {
             return '错误：未在消息平台中配置企业微信凭据，请先在侧边栏「消息平台」中配置企业微信智能机器人或自建应用凭据'
           }
+          // 企业微信智能表格当前仅支持智能机器人（botId + secret）授权通道（@wecom/cli）
+          if (!wecomCred.botId || !wecomCred.secret) {
+            return '错误：创建企业微信智能表格需要使用智能机器人凭据（botId + secret），当前仅配置了自建应用凭据，暂不支持'
+          }
 
           const client = new WecomSmartsheetClient({
             botId: wecomCred.botId,
             secret: wecomCred.secret,
-            corpId: wecomCred.corpId,
           })
 
           const res = await client.createSmartsheet({
