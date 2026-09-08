@@ -2,6 +2,17 @@
 
 本文件记录 `dsh-message-gateway` 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.1.28] - 2026-09-08
+
+### Added
+
+- **多步骤动态进度感知与三语支持**：在复杂长程任务（如调研、代码重构、多工具联动）执行期间，AI 在中间步骤停顿等待工具执行时，流式输出底部自动展示优雅的斜体状态感知提示（中：`⏳ 正在处理中，请稍候…` / 英：`⏳ Processing, please wait…` / 西：`⏳ Procesando, por favor espere…`），任务完全收敛定稿（`turn/end`）时自动无痕剥离，杜绝用户误判 AI 已中断或卡死
+
+### Fixed
+
+- **跨步骤流式消息累加防覆盖修复**：重构 `PendingReply` 流式聚合模型，引入 `stepMessages` 步骤数组机制；AI 在各阶段输出的中间思考过程与后续工具分析结论分段持久化累加，彻底根除后续消息覆盖冲刷掉前文历史的问题
+- **全平台进程级优雅退出与秒速重连**：注册系统退出信号监听（`SIGTERM` / `SIGINT` / `beforeExit`），在重启或关闭时全量平台（企业微信、Telegram、Discord、Email、QQ）并发主动发送断开握手帧，瞬间释放第三方服务端的连接互斥锁，彻底告别重启后长达 30 秒的僵尸连接排队等待期，实现 1~2 秒内秒速上线
+
 ## [0.1.27] - 2026-09-08
 
 ### Fixed

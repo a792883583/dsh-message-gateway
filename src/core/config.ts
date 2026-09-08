@@ -7,7 +7,7 @@
 import Schema from '@deepseek-ai/schemastery'
 
 /** 机器人回复语言。 */
-export type BotLocale = 'zh' | 'en'
+export type BotLocale = 'zh' | 'en' | 'es'
 
 /** 可选的机器人专用模型覆盖（不设置时跟随部署默认模型，与 Web 对话一致）。 */
 export interface BotModelOverride {
@@ -65,7 +65,7 @@ export interface GatewayConfig {
 
 /** 插件配置 schema（cordis Loader 校验 + dsh 配置面板渲染）。 */
 export const Config = Schema.object({
-  botLocale: Schema.union(['zh', 'en']).default('zh').description('机器人回复语言（zh 中文 / en English）'),
+  botLocale: Schema.union(['zh', 'en', 'es']).default('zh').description('机器人回复语言（zh 中文 / en English / es Español）'),
   maxChatAgents: Schema.natural().min(1).max(200).default(40).description('每个机器人最多保留的聊天会话数，超出自动淘汰最旧会话'),
   botModel: Schema.object({
     provider: Schema.string().required().description('模型供应商（如 pipio / opencode-go）'),

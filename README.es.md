@@ -38,6 +38,8 @@ Un plugin de pasarela de mensajería para la GUI web de DSH: una entrada "Plataf
 - **Redacción de secretos**: el contenido de los mensajes escrito en registros / consola se enmascara automáticamente ante posibles secretos
 - **Pruebas de conexión**: comprobaciones reales por plataforma — Telegram/Discord vía Bot API, QQ vía access_token, WeCom vía gettoken, cuenta oficial vía cgi-bin/token, WhatsApp vía Graph API, Email vía banner TCP de IMAP, Bot de IA de WeCom vía la conexión larga del SDK oficial
 - **Puente persistente del Bot de IA de WeCom**: conexión larga WebSocket del SDK oficial con reconexión por retroceso exponencial
+  - **Acumulación de flujo multietapa sin sobrescritura**: en tareas complejas de múltiples pasos, las conclusiones y pensamientos anteriores se conservan limpiamente sin ser reemplazados; las pausas muestran un indicador de estado dinámico (`⏳ Procesando, por favor espere…`) que se retira al finalizar
+  - **Cierre ordenado y reconexión inmediata**: captura las señales de apagado del sistema para cerrar las conexiones formalmente, eliminando los bloqueos por espera de 30 segundos y reconectando en 1–2 segundos
   - **Eliminación de menciones @ en grupos**
   - **Comandos de barra**: `/help` / `/time` / `/status` / `/stats`
   - **Mensaje de bienvenida opcional**

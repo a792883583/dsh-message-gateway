@@ -38,6 +38,7 @@ const MSGS: Record<BotLocale, Messages> = {
     statusAvailable: '可用',
     statusUnavailable: '不可用',
     timePrefix: '🕐',
+    stepLoading: '⏳ 正在处理中，请稍候…',
   },
   en: {
     ack: 'Processing…',
@@ -68,6 +69,38 @@ const MSGS: Record<BotLocale, Messages> = {
     statusAvailable: 'available',
     statusUnavailable: 'unavailable',
     timePrefix: '🕐',
+    stepLoading: '⏳ Processing, please wait…',
+  },
+  es: {
+    ack: 'Procesando…',
+    busy: '⏳ Todavía se está procesando su mensaje anterior, por favor espere',
+    noAgent: '⚠️ El asistente de DSH no está disponible en este momento',
+    welcome:
+      '¡Hola! Soy su asistente de IA 🤖\n\n' +
+      '- Chatea conmigo directamente\n' +
+      '- Cada chat tiene su propia sesión con compresión automática\n' +
+      '- Escriba /help para ver los comandos',
+    help:
+      '🤖 **Comandos del Asistente**\n' +
+      '- Enviar mensaje → Chat con IA\n' +
+      '- `/new` o `/clear` → Iniciar nueva sesión\n' +
+      '- `/time` → Hora actual\n' +
+      '- `/status` → Estado del bot\n' +
+      '- `/help` → Ayuda',
+    newOk: '✅ Nueva sesión iniciada, contexto anterior borrado',
+    newIdle: 'ℹ️ Este chat ya tiene una sesión limpia',
+    timeout: '⚠️ Se agotó el tiempo de espera, intente de nuevo',
+    statusTitle: '📡 **Estado del Bot**',
+    statusOnline: '✅ En línea',
+    statusOffline: '❌ Desconectado',
+    statusBotId: 'ID del Bot',
+    statusChats: 'Chats activos',
+    statusAgent: 'Asistente DSH',
+    statusTime: 'Hora',
+    statusAvailable: 'disponible',
+    statusUnavailable: 'no disponible',
+    timePrefix: '🕐',
+    stepLoading: '⏳ Procesando, por favor espere…',
   },
 }
 

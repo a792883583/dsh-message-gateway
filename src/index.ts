@@ -230,7 +230,19 @@ export function apply(ctx: Context, config: GatewayConfig = Config({} as Gateway
         disposeSmartsheet()
       }
     }
+    const onShutdown = (): void => {
+      try {
+        void manager.dispose()
+      } catch {}
+    }
+    process.once('SIGTERM', onShutdown)
+    process.once('SIGINT', onShutdown)
+    process.once('beforeExit', onShutdown)
+
     return () => {
+      process.off('SIGTERM', onShutdown)
+      process.off('SIGINT', onShutdown)
+      process.off('beforeExit', onShutdown)
       disposeTools?.()
       disposeRoutes()
       void manager.dispose()

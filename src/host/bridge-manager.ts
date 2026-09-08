@@ -57,6 +57,10 @@ interface PendingReply {
   sink: ReplySink
   streamId: string
   buffer: string
+  /** 已完成的历史步骤消息集合（避免跨步骤工具调用时前置消息被冲掉覆盖）。 */
+  stepMessages: string[]
+  /** 当前正在流式吐字的分段缓冲区。 */
+  currentStepBuffer: string
   /** 已消费到的事件序号（事件快照按 seq 顺序推进）。 */
   cursor: number
   /** 轮询定时器。 */
@@ -112,31 +116,40 @@ export class BridgeManager {
         p.cursor = i + 1
         const event = events[i]
         if (!event) continue
+
+        // 1. 实时文本分块（流式打字效果）
         if (event.type === 'assistant/chunk') {
           const chunk = (event as SessionEvent<'assistant/chunk'>).data?.chunk
           if (chunk && chunk.type === 'text-delta' && typeof chunk.text === 'string') {
-            p.buffer += chunk.text
+            p.currentStepBuffer += chunk.text
+            p.buffer = [...p.stepMessages, p.currentStepBuffer].filter(Boolean).join('\n\n')
             this.scheduleStream(p)
           }
           continue
         }
+
+        // 2. 某个步骤的完整文本已定稿（跨工具调用步骤）
         if (event.type === 'assistant/message') {
           const text = extractText((event as SessionEvent<'assistant/message'>).data?.message)
-          // 跳过空消息与纯工具调用消息：工具调用轮/中间步骤会产出空 assistant/message
-          // 或整段 XML 工具调用文本，真正完成时才有可发送的正文。
           if (text === '' || isToolCallOnly(text)) continue
-          p.buffer = text
-          const streamed = p.pushed
-          console.log('[dsh-message-gateway] assistant done', { key, seq: event.seq, len: p.buffer.length })
-          void this.pushStream(p, true)
-          void this.deliverHttp(p, streamed)
-          this.finishPending(key)
-          return
+
+          // 将当前定稿步骤沉淀进已完成步骤列表（去重保护）
+          if (!p.stepMessages.includes(text)) {
+            p.stepMessages.push(text)
+          }
+          p.currentStepBuffer = ''
+          p.buffer = p.stepMessages.join('\n\n')
+          this.scheduleStream(p)
+          continue
         }
+
+        // 3. 整个轮次所有步骤全部收敛执行结束
         if (event.type === 'turn/end') {
-          // 轮次结束收尾
+          p.buffer = [...p.stepMessages, p.currentStepBuffer].filter(Boolean).join('\n\n')
           if (p.buffer !== '') {
+            console.log('[dsh-message-gateway] turn fully ended', { key, steps: p.stepMessages.length, totalLen: p.buffer.length })
             void this.pushStream(p, true)
+            void this.deliverHttp(p, p.pushed)
             this.finishPending(key)
             return
           }
@@ -160,8 +173,16 @@ export class BridgeManager {
     if (!finish && p.lastPush !== 0 && now - p.lastPush < STREAM_PUSH_INTERVAL) return
     p.lastPush = now
     p.pushed = true
-    console.log('[dsh-message-gateway] stream push', { finish, len: p.buffer.length })
-    p.sink.stream(p.frame, p.streamId, p.buffer, finish)
+
+    // 多步骤友好提示：如果对话尚未完结 (finish: false)，在已输出的正文下方追加动态状态提示
+    let outputText = p.buffer
+    if (!finish && p.buffer !== '') {
+      const loadingHint = this.t('stepLoading')
+      outputText = `${p.buffer}\n\n*${loadingHint}*`
+    }
+
+    console.log('[dsh-message-gateway] stream push', { finish, len: outputText.length })
+    p.sink.stream(p.frame, p.streamId, outputText, finish)
   }
 
   /** 经平台 HTTP 定稿通道发送完整回复（幂等；流式已投递时不重复发）。 */
@@ -396,6 +417,8 @@ export class BridgeManager {
         sink: id.sink,
         streamId: `gw-${Date.now().toString(36)}`,
         buffer: '',
+        stepMessages: [],
+        currentStepBuffer: '',
         cursor: session.seq,
         timer: null,
         fallback: null,
