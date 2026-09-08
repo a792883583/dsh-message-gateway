@@ -53,6 +53,7 @@ await Promise.all([
       '@deepseek-ai/dsh-llm',
       '@wecom/aibot-node-sdk',
       '@larksuiteoapi/node-sdk',
+      'dingtalk-stream',
     ],
     sourcemap: true,
     logLevel: 'warning',

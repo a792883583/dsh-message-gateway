@@ -118,8 +118,9 @@ export const PLATFORMS: PlatformDef[] = [
     testable: true,
     hintKey: 'platform.dingtalk.hint',
     fields: [
-      { key: 'webhookUrl', labelKey: 'field.webhookUrl', placeholderKey: 'field.dingtalkWebhook.ph', kind: 'text' },
-      { key: 'secret', labelKey: 'field.dingtalkSecret', placeholderKey: 'field.secret.ph', kind: 'secret' },
+      { key: 'clientId', labelKey: 'field.dingtalkClientId', placeholderKey: 'field.dingtalkClientId.ph', kind: 'text' },
+      { key: 'clientSecret', labelKey: 'field.dingtalkClientSecret', placeholderKey: 'field.dingtalkClientSecret.ph', kind: 'secret' },
+      { key: 'robotCode', labelKey: 'field.dingtalkRobotCode', placeholderKey: 'field.dingtalkRobotCode.ph', kind: 'text' },
     ],
   },
   {
@@ -288,28 +289,20 @@ export async function testPlatform(id: string, cred: Record<string, string>): Pr
       return { ok: false, detail: banner === '' ? `无法连接 ${cred.imapHost}:${port}` : banner }
     }
     case 'dingtalk': {
-      // 钉钉自定义机器人 Webhook 测试（发送一条轻量测试验证消息）
-      const rawUrl = cred.webhookUrl ?? ''
-      if (!rawUrl.startsWith('http')) return { ok: false, detail: '无效的 Webhook URL' }
-      let targetUrl = rawUrl
-      if (cred.secret) {
-        const { createHmac } = await import('node:crypto')
-        const timestamp = Date.now()
-        const stringToSign = `${timestamp}\n${cred.secret}`
-        const sign = encodeURIComponent(createHmac('sha256', cred.secret).update(stringToSign, 'utf8').digest('base64'))
-        targetUrl += `${rawUrl.includes('?') ? '&' : '?'}timestamp=${timestamp}&sign=${sign}`
-      }
-      const { status, body } = await httpJson(targetUrl, {
+      // 钉钉企业自建应用 Stream 凭据鉴权测试（获取 access_token）
+      const clientId = cred.clientId ?? ''
+      const clientSecret = cred.clientSecret ?? ''
+      if (!clientId || !clientSecret) return { ok: false, detail: '请填写 Client ID (AppKey) 与 Client Secret (AppSecret)' }
+      const { status, body } = await httpJson('https://api.dingtalk.com/v1.0/oauth2/accessToken', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          msgtype: 'markdown',
-          markdown: { title: 'DSH 连接测试', text: '### 🔌 DSH Message Gateway\n钉钉自定义机器人连接测试成功！' },
-        }),
+        body: JSON.stringify({ appKey: clientId, appSecret: clientSecret }),
       })
-      const r = body as { errcode?: number; errmsg?: string }
-      if (r.errcode === 0) return { ok: true, detail: '钉钉机器人连接成功' }
-      return { ok: false, detail: r.errmsg ?? `HTTP ${status}` }
+      const r = body as { accessToken?: string; expireIn?: number; code?: string; message?: string }
+      if (r.accessToken !== undefined) {
+        return { ok: true, detail: `认证成功 · Client ID: ${clientId}` }
+      }
+      return { ok: false, detail: r.message ?? `HTTP ${status}` }
     }
     case 'feishu': {
       // 飞书开放平台企业自建应用鉴权测试

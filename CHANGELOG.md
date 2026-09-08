@@ -2,6 +2,24 @@
 
 本文件记录 `dsh-message-gateway` 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.1.31] - 2026-09-08
+
+### Added
+
+- **钉钉开放平台企业自建应用 Stream 模式长连接全面支持**：
+  - 基于钉钉官方 `dingtalk-stream` SDK（`DWClient`）接入 WebSocket 长连接模式，无需公网 IP 与内网穿透
+  - 支持单聊私信与群聊 `@机器人` 自动识别与独立 Agent 会话对接
+  - 接入会话 Webhook 实现标准 Markdown 语法回复，排版清晰美观
+  - 收到消息自动以 `socketCallBackResponse` 响应服务端，防止钉钉平台在 60 秒内无应答反复重试
+  - 前端面板升级为钉钉官方规范的 `Client ID (AppKey)`、`Client Secret (AppSecret)` 与 `RobotCode` 表单，并新增专属闪电翼矢量图标
+
+### Fixed
+
+- **钉钉连接状态识别与视觉指示修复**：修复官方 SDK 在 `connect()` resolve 时代替自定义事件触发的问题，保证长连接建立后即刻切换为绿色圆点与「已连接」状态
+- **多语言状态字典补全**：新增中、英、西三语的 `gateway.status.connecting` 状态文案，并支持过渡状态样式
+- **外部化依赖与构建安全**：将 `dingtalk-stream` 纳入 `scripts/build.mjs` 的 host external 列表，杜绝 ESM 动态加载 CJS 模块引发运行时崩溃
+- **生命周期断开保障**：在配置删除与插件卸载时安全调用 `stopDingTalk()`，彻底清理 WebSocket 长连接
+
 ## [0.1.30] - 2026-09-08
 
 ### Added

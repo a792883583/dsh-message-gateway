@@ -76,7 +76,7 @@ async function buildView(manager: BridgeManager): Promise<GatewayView> {
     let state: PlatformStatus['state'] = stored?.state ?? (def.id === 'wechat' || def.id === 'webhooks' ? 'manual' : 'none')
     let detail = stored?.detail ?? ''
     let testedAt = stored?.testedAt ?? null
-    if (def.id === 'wecom-aibot' || def.id === 'telegram' || def.id === 'discord' || def.id === 'qq' || def.id === 'email' || def.id === 'feishu') {
+    if (def.id === 'wecom-aibot' || def.id === 'telegram' || def.id === 'discord' || def.id === 'qq' || def.id === 'email' || def.id === 'feishu' || def.id === 'dingtalk') {
       const merged = manager.mergeStatus(stored, def.id)
       state = merged.state
       detail = merged.detail
@@ -469,6 +469,7 @@ export function registerGatewayRoutes(ctx: Context, manager: BridgeManager): () 
             if (platform === 'qq') manager.stopQQ()
             if (platform === 'email') manager.stopEmail()
             if (platform === 'feishu') manager.stopFeishu()
+            if (platform === 'dingtalk') manager.stopDingTalk()
             json(res, { ok: true, value: await buildView(manager) })
             return
           }
@@ -518,6 +519,13 @@ export function registerGatewayRoutes(ctx: Context, manager: BridgeManager): () 
                 manager.startFeishu(credentials)
               } else {
                 manager.stopFeishu()
+              }
+            }
+            if (platform === 'dingtalk') {
+              if (credentials.clientId !== undefined && credentials.clientId !== '' && credentials.clientSecret !== undefined && credentials.clientSecret !== '') {
+                manager.startDingTalk(credentials)
+              } else {
+                manager.stopDingTalk()
               }
             }
             json(res, { ok: true, value: await buildView(manager) })

@@ -23,6 +23,7 @@ import { DiscordBridge } from './discord-bridge.ts'
 import { QQBridge } from './qq-bridge.ts'
 import { EmailBridge, type EmailCred } from './email-bridge.ts'
 import { FeishuBridge } from './feishu-bridge.ts'
+import { DingTalkBridge } from './dingtalk-bridge.ts'
 
 /** 每个聊天最多保留的独立会话数（超出后淘汰最早创建的，释放上下文）。 */
 const DEFAULT_MAX_CHAT_AGENTS = 40
@@ -379,6 +380,8 @@ export class BridgeManager {
     this.email = null
     this.feishu?.stop()
     this.feishu = null
+    this.dingtalk?.stop()
+    this.dingtalk = null
 
     // 2. 清除在途轮询与心跳定时器
     this.finishAllPending()
@@ -898,6 +901,43 @@ export class BridgeManager {
   private qq: { start(): void; stop(): void; status: BridgeStatus } | null = null
   private email: { start(): void; stop(): void; send(to: string, subject: string, content: string): Promise<boolean>; status: BridgeStatus } | null = null
   private feishu: FeishuBridge | null = null
+  private dingtalk: DingTalkBridge | null = null
+
+  /** 启动 DingTalk 桥（企业自建应用 Stream 模式 WebSocket 长连接）。 */
+  startDingTalk(cred: Record<string, string>): void {
+    this.dingtalk?.stop()
+    const bridge = new DingTalkBridge(
+      { clientId: cred.clientId ?? '', clientSecret: cred.clientSecret ?? '', robotCode: cred.robotCode },
+      {
+        onStatus: (status) => this.onStatusCallback?.(status),
+        onText: (text, frame) => {
+          const identity: ChatIdentity = {
+            key: `dingtalk:${frame.conversationId}`,
+            frame,
+            sink: {
+              stream: (_f, _streamId, content, finish) => {
+                // 钉钉 Stream 回调后，finish=true 时通过 sessionWebhook 进行 Markdown 定稿回复
+                if (finish && content.trim() && frame.sessionWebhook) {
+                  void bridge.replySession(frame.sessionWebhook, content)
+                }
+              },
+              ack: false,
+            },
+            chatType: frame.chatType,
+          }
+          void this.handleExternalMessage(identity, text)
+        },
+      },
+    )
+    this.dingtalk = bridge
+    bridge.start()
+  }
+
+  /** 停止 DingTalk 桥。 */
+  stopDingTalk(): void {
+    this.dingtalk?.stop()
+    this.dingtalk = null
+  }
 
   /** 启动 Feishu 桥（企业自建应用 WebSocket 长连接）。 */
   startFeishu(cred: Record<string, string>): void {
@@ -1013,13 +1053,14 @@ export class BridgeManager {
     this.email = null
   }
 
-  /** 任意桥接平台的状态（telegram/discord/qq/email/feishu）。 */
+  /** 任意桥接平台的状态（telegram/discord/qq/email/feishu/dingtalk）。 */
   bridgeStatus(id: string): BridgeStatus {
     if (id === 'telegram') return this.telegram?.status ?? { state: 'idle', detail: '', connectedAt: null }
     if (id === 'discord') return this.discord?.status ?? { state: 'idle', detail: '', connectedAt: null }
     if (id === 'qq') return this.qq?.status ?? { state: 'idle', detail: '', connectedAt: null }
     if (id === 'email') return this.email?.status ?? { state: 'idle', detail: '', connectedAt: null }
     if (id === 'feishu') return this.feishu?.status ?? { state: 'idle', detail: '', connectedAt: null }
+    if (id === 'dingtalk') return this.dingtalk?.status ?? { state: 'idle', detail: '', connectedAt: null }
     return { state: 'idle', detail: '', connectedAt: null }
   }
 
@@ -1101,6 +1142,7 @@ export class BridgeManager {
         bridgeLine('QQ', this.bridgeStatus('qq')),
         bridgeLine('Email', this.bridgeStatus('email')),
         bridgeLine('Feishu', this.bridgeStatus('feishu')),
+        bridgeLine('DingTalk', this.bridgeStatus('dingtalk')),
       ]
       reply(lines.join('\n'))
       return true

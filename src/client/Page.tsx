@@ -43,6 +43,7 @@ const STYLE = `
   white-space:nowrap; }
 .dsh-gw-item .dot { flex:none; width:8px; height:8px; border-radius:50%; }
 .dsh-gw-item .dot.connected { background:var(--gw-ok); }
+.dsh-gw-item .dot.connecting { background:var(--gw-warn); }
 .dsh-gw-item .dot.error { background:var(--gw-err); }
 .dsh-gw-item .dot.none { background:#8b949e; }
 .dsh-gw-item .dot.manual { background:var(--gw-warn); }
@@ -54,6 +55,7 @@ const STYLE = `
 .dsh-gw-status { display:inline-flex; align-items:center; gap:6px; padding:3px 10px;
   border-radius:999px; font-size:11px; margin-bottom:14px; }
 .dsh-gw-status.connected { background:rgba(26,127,55,0.12); color:var(--gw-ok); }
+.dsh-gw-status.connecting { background:rgba(154,103,0,0.12); color:var(--gw-warn); }
 .dsh-gw-status.error { background:rgba(207,34,46,0.12); color:var(--gw-err); }
 .dsh-gw-status.none { background:var(--gw-panel); color:var(--gw-muted); }
 .dsh-gw-status.manual { background:rgba(154,103,0,0.12); color:var(--gw-warn); }
@@ -232,6 +234,9 @@ export function GatewayPage(props: { api: GatewayApi; onClose: () => void }): Re
                   <span className={`dsh-gw-status ${selectedStatus.state}`}>
                     {t(`gateway.status.${selectedStatus.state}`)}
                     {selectedStatus.state === 'connected' && selectedStatus.detail !== ''
+                      ? ` · ${selectedStatus.detail}`
+                      : ''}
+                    {selectedStatus.state === 'connecting' && selectedStatus.detail !== ''
                       ? ` · ${selectedStatus.detail}`
                       : ''}
                     {selectedStatus.state === 'error' && selectedStatus.detail !== ''
