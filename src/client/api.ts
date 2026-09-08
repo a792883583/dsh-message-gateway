@@ -42,4 +42,16 @@ export class GatewayApi {
   test(platform: string, credentials?: Record<string, string>): Promise<Envelope<{ ok: boolean; detail: string }>> {
     return this.post('/gateway/test', { platform, ...credentials })
   }
+
+  getWechatQr(): Promise<Envelope<{ qrcode: string; qrcodeUrl: string }>> {
+    return this.post('/gateway/wechat/qr', {})
+  }
+
+  pollWechatQr(qrcode: string): Promise<Envelope<{
+    status: 'wait' | 'scaned' | 'confirmed' | 'expired' | 'scaned_but_redirect'
+    botToken?: string
+    userId?: string
+  }>> {
+    return this.post('/gateway/wechat/qr-status', { qrcode })
+  }
 }

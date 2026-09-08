@@ -24,6 +24,7 @@ import { QQBridge } from './qq-bridge.ts'
 import { EmailBridge, type EmailCred } from './email-bridge.ts'
 import { FeishuBridge } from './feishu-bridge.ts'
 import { DingTalkBridge } from './dingtalk-bridge.ts'
+import { WechatIlinkBridge, type WechatIlinkCred } from './wechat-ilink-bridge.ts'
 
 /** 每个聊天最多保留的独立会话数（超出后淘汰最早创建的，释放上下文）。 */
 const DEFAULT_MAX_CHAT_AGENTS = 40
@@ -382,6 +383,8 @@ export class BridgeManager {
     this.feishu = null
     this.dingtalk?.stop()
     this.dingtalk = null
+    this.wechat?.stop()
+    this.wechat = null
 
     // 2. 清除在途轮询与心跳定时器
     this.finishAllPending()
@@ -902,6 +905,31 @@ export class BridgeManager {
   private email: { start(): void; stop(): void; send(to: string, subject: string, content: string): Promise<boolean>; status: BridgeStatus } | null = null
   private feishu: FeishuBridge | null = null
   private dingtalk: DingTalkBridge | null = null
+  private wechat: WechatIlinkBridge | null = null
+
+  /** 启动微信智能机器人桥（腾讯 iLink 官方协议长轮询）。 */
+  startWechat(cred: Record<string, string>): void {
+    this.wechat?.stop()
+    const ilinkCred: WechatIlinkCred = {
+      botToken: cred.botToken ?? '',
+      baseUrl: cred.baseUrl,
+      botId: cred.botId,
+      userId: cred.userId,
+      nickname: cred.nickname,
+    }
+    const bridge = new WechatIlinkBridge(ilinkCred, {
+      onStatus: (status) => this.onStatusCallback?.(status),
+      onText: (text, identity) => void this.handleExternalMessage(identity, text),
+    })
+    this.wechat = bridge
+    bridge.start()
+  }
+
+  /** 停止微信桥。 */
+  stopWechat(): void {
+    this.wechat?.stop()
+    this.wechat = null
+  }
 
   /** 启动 DingTalk 桥（企业自建应用 Stream 模式 WebSocket 长连接）。 */
   startDingTalk(cred: Record<string, string>): void {
@@ -1061,6 +1089,7 @@ export class BridgeManager {
     if (id === 'email') return this.email?.status ?? { state: 'idle', detail: '', connectedAt: null }
     if (id === 'feishu') return this.feishu?.status ?? { state: 'idle', detail: '', connectedAt: null }
     if (id === 'dingtalk') return this.dingtalk?.status ?? { state: 'idle', detail: '', connectedAt: null }
+    if (id === 'wechat') return this.wechat?.status ?? { state: 'idle', detail: '', connectedAt: null }
     return { state: 'idle', detail: '', connectedAt: null }
   }
 
@@ -1143,6 +1172,7 @@ export class BridgeManager {
         bridgeLine('Email', this.bridgeStatus('email')),
         bridgeLine('Feishu', this.bridgeStatus('feishu')),
         bridgeLine('DingTalk', this.bridgeStatus('dingtalk')),
+        bridgeLine('WeChat', this.bridgeStatus('wechat')),
       ]
       reply(lines.join('\n'))
       return true

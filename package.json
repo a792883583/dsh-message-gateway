@@ -1,6 +1,6 @@
 {
   "name": "dsh-message-gateway",
-  "version": "0.1.32",
+  "version": "0.1.33",
   "description": "Universal message-platform gateway for the DSH web GUI: configure QQ / WeChat / WeCom / WeCom AI bot / Discord / Telegram / WhatsApp / Email / Webhooks connectors, save credentials, test connections, and run a persistent WeCom AI bot bridge with per-chat sessions and auto context compression, same as the web conversation.",
   "license": "MIT",
   "author": "Jaden Tang <jaden.tang@sjfood.com>",
@@ -62,6 +62,7 @@
     "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
     "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "esbuild": "^0.25.0",
@@ -73,7 +74,8 @@
     "@larksuiteoapi/node-sdk": "^1.73.3",
     "@wecom/aibot-node-sdk": "^1.0.7",
     "@wecom/cli": "^1.2.0",
-    "dingtalk-stream": "^2.1.6-beta.1"
+    "dingtalk-stream": "^2.1.6-beta.1",
+    "qrcode": "^1.5.4"
   },
   "repository": {
     "type": "git",

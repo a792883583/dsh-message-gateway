@@ -55,6 +55,7 @@ await Promise.all([
       '@larksuiteoapi/node-sdk',
       'dingtalk-stream',
       'undici',
+      'qrcode',
     ],
     sourcemap: true,
     logLevel: 'warning',

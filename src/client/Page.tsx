@@ -99,6 +99,9 @@ export function GatewayPage(props: { api: GatewayApi; onClose: () => void }): Re
   const [message, setMessage] = useState<{ text: string; kind: 'ok' | 'err' } | null>(null)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null)
+  const [wechatQr, setWechatQr] = useState<{ qrcode: string; qrcodeUrl: string } | null>(null)
+  const [wechatQrLoading, setWechatQrLoading] = useState(false)
+  const [wechatScanStatus, setWechatScanStatus] = useState<string | null>(null)
 
   const load = useCallback(async (): Promise<void> => {
     const result = await api.list()
@@ -138,6 +141,51 @@ export function GatewayPage(props: { api: GatewayApi; onClose: () => void }): Re
     setForm({})
     setMessage(null)
     setTestResult(null)
+    setWechatQr(null)
+    setWechatScanStatus(null)
+  }
+
+  const getWechatQrCode = async (): Promise<void> => {
+    setWechatQrLoading(true)
+    setWechatScanStatus(null)
+    setMessage(null)
+    const res = await api.getWechatQr()
+    setWechatQrLoading(false)
+    if (!res.ok) {
+      setMessage({ text: res.error.message, kind: 'err' })
+      return
+    }
+    setWechatQr(res.value)
+    setWechatScanStatus(t('gateway.wechat.scanning'))
+
+    // 启动轮询检查扫码确认状态
+    const qrcode = res.value.qrcode
+    let active = true
+    const poll = async () => {
+      while (active) {
+        await new Promise((r) => setTimeout(r, 2000))
+        if (!active) break
+        const stRes = await api.pollWechatQr(qrcode)
+        if (stRes.ok) {
+          const st = stRes.value.status
+          if (st === 'scaned') {
+            setWechatScanStatus('已扫码，请在手机微信上点击确认登录…')
+          } else if (st === 'confirmed') {
+            setWechatScanStatus(t('gateway.wechat.scanSuccess'))
+            setWechatQr(null)
+            active = false
+            await load()
+            break
+          } else if (st === 'expired') {
+            setWechatScanStatus('二维码已过期，请重新获取')
+            setWechatQr(null)
+            active = false
+            break
+          }
+        }
+      }
+    }
+    void poll()
   }
 
   const save = async (): Promise<void> => {
@@ -263,6 +311,48 @@ export function GatewayPage(props: { api: GatewayApi; onClose: () => void }): Re
                   </span>
                 ) : null}
 
+                {selectedDef.id === 'wechat' ? (
+                  <div style={{ marginBottom: 18 }}>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12 }}>
+                      <button
+                        type="button"
+                        className="dsh-gw-btn primary"
+                        disabled={wechatQrLoading}
+                        onClick={() => void getWechatQrCode()}
+                      >
+                        {wechatQrLoading ? '正在获取…' : t('gateway.wechat.getQr')}
+                      </button>
+                      {wechatScanStatus ? (
+                        <span style={{ fontSize: 12, color: 'var(--gw-accent)', fontWeight: 500 }}>
+                          {wechatScanStatus}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {wechatQr ? (
+                      <div
+                        style={{
+                          padding: 14,
+                          background: 'var(--gw-panel)',
+                          border: '1px solid var(--gw-border)',
+                          borderRadius: 10,
+                          display: 'inline-flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          gap: 10,
+                        }}
+                      >
+                        <img
+                          src={wechatQr.qrcodeUrl}
+                          alt="WeChat QR Code"
+                          style={{ width: 190, height: 190, borderRadius: 6, background: '#fff', padding: 4 }}
+                        />
+                        <div style={{ fontSize: 12, color: 'var(--gw-muted)' }}>{t('gateway.wechat.qrHint')}</div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 {selectedDef.fields.map((field) => (
                   <div key={field.key} className="dsh-gw-field">
                     <label>{t(field.labelKey)}</label>
@@ -295,7 +385,12 @@ export function GatewayPage(props: { api: GatewayApi; onClose: () => void }): Re
                       ) : null}
                     </>
                   ) : (
-                    <span className="hint">{t(selectedDef.hintKey ?? '')}</span>
+                    <>
+                      {selectedStatus?.configured === true ? (
+                        <button type="button" className="dsh-gw-btn danger" disabled={busy}
+                          onClick={() => void remove()}>{t('gateway.delete')}</button>
+                      ) : null}
+                    </>
                   )}
                   {message !== null ? <span className={`dsh-gw-msg ${message.kind}`}>{message.text}</span> : null}
                 </div>

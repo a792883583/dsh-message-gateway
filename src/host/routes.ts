@@ -75,10 +75,10 @@ async function buildView(manager: BridgeManager): Promise<GatewayView> {
     const configured = store.platforms[def.id] !== undefined
     let state: PlatformStatus['state'] = configured
       ? (stored?.state ?? 'none')
-      : (def.id === 'wechat' || def.id === 'webhooks' ? 'manual' : 'none')
+      : (def.id === 'webhooks' ? 'manual' : 'none')
     let detail = configured ? (stored?.detail ?? '') : ''
     let testedAt = configured ? (stored?.testedAt ?? null) : null
-    if (configured && (def.id === 'wecom-aibot' || def.id === 'telegram' || def.id === 'discord' || def.id === 'qq' || def.id === 'email' || def.id === 'feishu' || def.id === 'dingtalk')) {
+    if (configured && (def.id === 'wecom-aibot' || def.id === 'telegram' || def.id === 'discord' || def.id === 'qq' || def.id === 'email' || def.id === 'feishu' || def.id === 'dingtalk' || def.id === 'wechat')) {
       const merged = manager.mergeStatus(stored, def.id)
       state = merged.state
       detail = merged.detail
@@ -454,6 +454,50 @@ export function registerGatewayRoutes(ctx: Context, manager: BridgeManager): () 
           json(res, { ok: true, value: await buildView(manager) })
           return
         }
+        if (path === '/gateway/wechat/qr') {
+          try {
+            const { WechatIlinkBridge } = await import('./wechat-ilink-bridge.ts')
+            const qr = await WechatIlinkBridge.getLoginQr()
+            json(res, { ok: true, value: qr })
+          } catch (e) {
+            json(res, { ok: false, error: { code: 'internal', message: e instanceof Error ? e.message : String(e) } })
+          }
+          return
+        }
+        if (path === '/gateway/wechat/qr-status') {
+          const body = payload as { qrcode?: string } | null
+          const qrcode = body?.qrcode ?? ''
+          if (!qrcode) {
+            json(res, { ok: false, error: { code: 'internal', message: 'missing qrcode' } })
+            return
+          }
+          try {
+            const { WechatIlinkBridge } = await import('./wechat-ilink-bridge.ts')
+            const status = await WechatIlinkBridge.pollQrStatus(qrcode)
+            if (status.status === 'confirmed' && status.botToken) {
+              // 手机微信确认登录：自动存盘并启动微信长轮询桥
+              const store = await loadStore()
+              const cred: Record<string, string> = {
+                botToken: status.botToken,
+                baseUrl: status.baseUrl ?? '',
+                botId: status.botId ?? '',
+                userId: status.userId ?? '',
+              }
+              store.platforms.wechat = cred
+              store.statuses.wechat = {
+                state: 'connected',
+                detail: status.userId ? `@${status.userId}` : '微信智能机器人',
+                testedAt: Date.now(),
+              }
+              await saveStore(store)
+              manager.startWechat(cred)
+            }
+            json(res, { ok: true, value: status })
+          } catch (e) {
+            json(res, { ok: false, error: { code: 'internal', message: e instanceof Error ? e.message : String(e) } })
+          }
+          return
+        }
         if (path === '/gateway/save' || path === '/gateway/delete' || path === '/gateway/test') {
           const platform = (payload as { platform?: unknown } | null)?.platform
           if (typeof platform !== 'string') {
@@ -472,6 +516,7 @@ export function registerGatewayRoutes(ctx: Context, manager: BridgeManager): () 
             if (platform === 'email') manager.stopEmail()
             if (platform === 'feishu') manager.stopFeishu()
             if (platform === 'dingtalk') manager.stopDingTalk()
+            if (platform === 'wechat') manager.stopWechat()
             json(res, { ok: true, value: await buildView(manager) })
             return
           }
@@ -528,6 +573,13 @@ export function registerGatewayRoutes(ctx: Context, manager: BridgeManager): () 
                 manager.startDingTalk(credentials)
               } else {
                 manager.stopDingTalk()
+              }
+            }
+            if (platform === 'wechat') {
+              if (credentials.botToken !== undefined && credentials.botToken !== '') {
+                manager.startWechat(credentials)
+              } else {
+                manager.stopWechat()
               }
             }
             json(res, { ok: true, value: await buildView(manager) })

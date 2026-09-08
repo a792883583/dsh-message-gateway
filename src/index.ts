@@ -83,6 +83,11 @@ export function apply(ctx: Context, config: GatewayConfig = Config({} as Gateway
         manager.startDingTalk(dingtalk)
         console.log('[dsh-message-gateway] dingtalk bridge auto-started')
       }
+      const wechat = store.platforms.wechat
+      if (wechat !== undefined && wechat.botToken !== '' && wechat.botToken !== undefined) {
+        manager.startWechat(wechat)
+        console.log('[dsh-message-gateway] wechat bridge auto-started')
+      }
     })
     const disposeRoutes = registerGatewayRoutes(ctx, manager)
     // 注册通用 Agent 工具：① send_chat_message ② wecom_create_smartsheet

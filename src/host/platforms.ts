@@ -66,10 +66,7 @@ export const PLATFORMS: PlatformDef[] = [
     icon: '💚',
     testable: false,
     hintKey: 'platform.wechat.hint',
-    fields: [
-      { key: 'gatewayUrl', labelKey: 'field.gatewayUrl', placeholderKey: 'field.gatewayUrl.ph', kind: 'text' },
-      { key: 'token', labelKey: 'field.token', placeholderKey: 'field.secret.ph', kind: 'secret' },
-    ],
+    fields: [],
   },
   {
     id: 'wechat-mp',
