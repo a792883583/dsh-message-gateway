@@ -112,6 +112,11 @@ export function GatewayPage(props: { api: GatewayApi; onClose: () => void }): Re
 
   useEffect(() => {
     void load()
+    // 当弹窗打开且有平台处于 connecting 连接中时，自动轮询刷新
+    const interval = setInterval(() => {
+      void load()
+    }, 3000)
+    return () => clearInterval(interval)
   }, [load])
 
   // ESC 关闭。
@@ -144,13 +149,26 @@ export function GatewayPage(props: { api: GatewayApi; onClose: () => void }): Re
     }
     setBusy(true)
     setMessage(null)
+    setTestResult(null)
     const result = await api.save(selected, form)
     setBusy(false)
     if (result.ok) {
       setView(result.value)
       setMessage({ text: t('gateway.saved'), kind: 'ok' })
-      // 保存成功后立即用刚保存的凭据测一次连接，状态即时刷新。
-      void runTest()
+      // 保存后启动高频轮询（每 800ms 刷新一次，最多轮询 8 次），连接一旦从 connecting 变为 connected 立即响应
+      let count = 0
+      const timer = setInterval(async () => {
+        count += 1
+        const res = await api.list()
+        if (res.ok) {
+          setView(res.value)
+          const curr = res.value.status[selected]
+          if (curr && curr.state !== 'connecting') {
+            clearInterval(timer)
+          }
+        }
+        if (count >= 8) clearInterval(timer)
+      }, 800)
     } else {
       setMessage({ text: result.error.message, kind: 'err' })
     }

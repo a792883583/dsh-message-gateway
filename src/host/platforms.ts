@@ -169,12 +169,14 @@ export function platformDef(id: string): PlatformDef | undefined {
   return PLATFORMS.find((p) => p.id === id)
 }
 
+import { smartFetch } from './proxy.ts'
+
 /** 短超时 JSON GET/POST。 */
 async function httpJson(url: string, init?: RequestInit): Promise<{ status: number; body: unknown }> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 12_000)
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal })
+    const response = await smartFetch(url, { ...init, signal: controller.signal })
     let body: unknown = null
     try {
       body = await response.json()

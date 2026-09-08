@@ -8,6 +8,8 @@
 
 import type { BridgeStatus } from './wecom-bridge.ts'
 import type { ChatIdentity, ReplySink } from './bridge-manager.ts'
+import { getProxyDispatcher, smartFetch } from './proxy.ts'
+import { WebSocket as UndiciWebSocket } from 'undici'
 
 export interface DiscordBridgeCallbacks {
   onStatus(status: BridgeStatus): void
@@ -62,26 +64,34 @@ export class DiscordBridge {
 
   private connect(): void {
     if (this.stopped) return
-    let ws: WebSocket
-    try {
-      ws = new WebSocket(GATEWAY_URL)
-    } catch (error) {
-      console.error('[dsh-message-gateway] discord ws create failed', error)
-      this.setStatus('error', 'ws create failed')
-      return
-    }
-    this.ws = ws
-    ws.onopen = () => console.log('[dsh-message-gateway] discord gateway open')
-    ws.onmessage = (event) => this.onMessage(String(event.data))
-    ws.onerror = () => console.warn('[dsh-message-gateway] discord gateway ws error')
-    ws.onclose = () => {
-      this.clearHeartbeat()
-      this.ws = null
-      if (!this.stopped) {
-        console.warn('[dsh-message-gateway] discord gateway closed, reconnect in 3s')
-        setTimeout(() => this.connect(), 3000)
+    void (async () => {
+      let ws: WebSocket | UndiciWebSocket
+      try {
+        const dispatcher = await getProxyDispatcher()
+        if (dispatcher) {
+          // undici WebSocket 支持 dispatcher 代理通道
+          ws = new UndiciWebSocket(GATEWAY_URL, { dispatcher } as any)
+        } else {
+          ws = new WebSocket(GATEWAY_URL)
+        }
+      } catch (error) {
+        console.error('[dsh-message-gateway] discord ws create failed', error)
+        this.setStatus('error', 'ws create failed')
+        return
       }
-    }
+      this.ws = ws as WebSocket
+      ws.onopen = () => console.log('[dsh-message-gateway] discord gateway open')
+      ws.onmessage = (event: any) => this.onMessage(String(event.data))
+      ws.onerror = () => console.warn('[dsh-message-gateway] discord gateway ws error')
+      ws.onclose = () => {
+        this.clearHeartbeat()
+        this.ws = null
+        if (!this.stopped) {
+          console.warn('[dsh-message-gateway] discord gateway closed, reconnect in 3s')
+          setTimeout(() => this.connect(), 3000)
+        }
+      }
+    })()
   }
 
   private onMessage(raw: string): void {
@@ -105,8 +115,10 @@ export class DiscordBridge {
       }
       case 0: { // DISPATCH
         if (payload.t === 'READY') {
-          this.setStatus('connected', 'discord')
-          console.log('[dsh-message-gateway] discord READY')
+          const user = (payload.d as { user?: { username?: string } })?.user
+          const name = user?.username ? `@${user.username}` : '已连接'
+          this.setStatus('connected', name)
+          console.log('[dsh-message-gateway] discord READY', name)
         } else if (payload.t === 'MESSAGE_CREATE') {
           this.handleMessage(payload.d as Record<string, unknown>)
         }
@@ -120,7 +132,7 @@ export class DiscordBridge {
   }
 
   private sendOp(op: number, d: unknown): void {
-    if (this.ws === null || this.ws.readyState !== WebSocket.OPEN) return
+    if (this.ws === null || this.ws.readyState !== 1) return
     this.ws.send(JSON.stringify({ op, d }))
   }
 
@@ -149,17 +161,14 @@ export class DiscordBridge {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 15_000)
     try {
-      const response = await fetch(`${REST}${path}`, {
+      const response = await smartFetch(`${REST}${path}`, {
         method,
         headers: { authorization: `Bot ${this.token}`, 'content-type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
       })
-      if (!response.ok) {
-        console.warn('[dsh-message-gateway] discord rest', method, path, response.status)
-        return null
-      }
-      return await response.json() as unknown
+      const data = await response.json()
+      return data
     } catch (error) {
       console.warn('[dsh-message-gateway] discord rest failed', method, path, String(error))
       return null

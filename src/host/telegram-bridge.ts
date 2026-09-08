@@ -7,6 +7,7 @@
 
 import type { BridgeStatus } from './wecom-bridge.ts'
 import type { ChatIdentity, ReplySink } from './bridge-manager.ts'
+import { getProxyDispatcher } from './proxy.ts'
 
 export interface TelegramBridgeCallbacks {
   onStatus(status: BridgeStatus): void
@@ -51,12 +52,14 @@ export class TelegramBridge {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
+      const dispatcher = await getProxyDispatcher()
       const response = await fetch(`https://api.telegram.org/bot${this.token}/${method}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(params),
         signal: controller.signal,
-      })
+        ...(dispatcher ? { dispatcher } : {}),
+      } as RequestInit)
       const body = (await response.json()) as { ok?: boolean; result?: unknown; description?: string }
       if (body.ok === true) return body.result
       console.warn('[dsh-message-gateway] telegram api', method, body.description ?? `HTTP ${response.status}`)

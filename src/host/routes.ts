@@ -73,10 +73,12 @@ async function buildView(manager: BridgeManager): Promise<GatewayView> {
   for (const def of PLATFORMS) {
     const stored = store.statuses[def.id]
     const configured = store.platforms[def.id] !== undefined
-    let state: PlatformStatus['state'] = stored?.state ?? (def.id === 'wechat' || def.id === 'webhooks' ? 'manual' : 'none')
-    let detail = stored?.detail ?? ''
-    let testedAt = stored?.testedAt ?? null
-    if (def.id === 'wecom-aibot' || def.id === 'telegram' || def.id === 'discord' || def.id === 'qq' || def.id === 'email' || def.id === 'feishu' || def.id === 'dingtalk') {
+    let state: PlatformStatus['state'] = configured
+      ? (stored?.state ?? 'none')
+      : (def.id === 'wechat' || def.id === 'webhooks' ? 'manual' : 'none')
+    let detail = configured ? (stored?.detail ?? '') : ''
+    let testedAt = configured ? (stored?.testedAt ?? null) : null
+    if (configured && (def.id === 'wecom-aibot' || def.id === 'telegram' || def.id === 'discord' || def.id === 'qq' || def.id === 'email' || def.id === 'feishu' || def.id === 'dingtalk')) {
       const merged = manager.mergeStatus(stored, def.id)
       state = merged.state
       detail = merged.detail
@@ -534,15 +536,20 @@ export function registerGatewayRoutes(ctx: Context, manager: BridgeManager): () 
           // /gateway/test：优先用请求携带的凭据（只测不存），否则用已保存的。
           const submitted = extractCredentials(platform, payload)
           const hasSubmitted = Object.keys(submitted).length > 0
+          const isConfigured = store.platforms[platform] !== undefined
           const credentials = hasSubmitted ? submitted : (store.platforms[platform] ?? {})
           const result: TestResult = await testPlatform(platform, credentials)
-          const stored = {
-            state: result.ok ? ('connected' as const) : ('error' as const),
-            detail: result.detail,
-            testedAt: Date.now(),
+          // 仅当平台已保存配置，或者本次测试使用的就是已保存的凭据时，才将测试状态持久化到磁盘；
+          // 如果用户只是在空白表单里点"测试连接"临时测一下，不应把全局状态变成"已连接"
+          if (isConfigured && !hasSubmitted) {
+            const stored = {
+              state: result.ok ? ('connected' as const) : ('error' as const),
+              detail: result.detail,
+              testedAt: Date.now(),
+            }
+            store.statuses[platform] = stored
+            await saveStore(store)
           }
-          store.statuses[platform] = stored
-          await saveStore(store)
           json(res, { ok: true, value: { ok: result.ok, detail: result.detail } })
           return
         }

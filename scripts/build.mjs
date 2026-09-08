@@ -54,6 +54,7 @@ await Promise.all([
       '@wecom/aibot-node-sdk',
       '@larksuiteoapi/node-sdk',
       'dingtalk-stream',
+      'undici',
     ],
     sourcemap: true,
     logLevel: 'warning',

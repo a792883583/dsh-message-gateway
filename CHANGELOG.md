@@ -2,6 +2,20 @@
 
 本文件记录 `dsh-message-gateway` 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.1.32] - 2026-09-08
+
+### Added
+
+- **境外平台智能代理通道支持 (Discord / Telegram)**：
+  - 自动探测本机科学上网代理端口（如 `127.0.0.1:7890` Clash / 7897 / 10808 等）与系统环境变量，解决国内防火墙对 Discord/Telegram API 及 Gateway WebSocket 的连接阻断（`fetch failed` / `SSL_ERROR_SYSCALL`）
+  - 接入 `undici` 现代网络引擎，通过 `ProxyAgent` 实现 REST 请求与 WebSocket 全链路透明代理
+  - 境内平台（钉钉、企业微信、飞书等）智能保持直连，零额外开销
+
+### Fixed
+
+- **只测不存与删除按钮展示逻辑**：在空白表单点击「测试连接」时不再误将全局状态持久化为「已连接」，确保仅在用户明确点击「保存」后才固化凭据与显示「删除配置」
+- **长连接保存后状态自动轮询过渡**：前端在点击保存后自动开启轻量自适应轮询，长连接在后台完成握手后（`READY` 信号）自动平滑由「连接中」切换为「已连接 · @roboot」并点亮绿色圆点，无需关闭重开弹窗
+
 ## [0.1.31] - 2026-09-08
 
 ### Added
