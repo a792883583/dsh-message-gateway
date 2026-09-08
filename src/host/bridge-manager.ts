@@ -22,6 +22,7 @@ import { TelegramBridge } from './telegram-bridge.ts'
 import { DiscordBridge } from './discord-bridge.ts'
 import { QQBridge } from './qq-bridge.ts'
 import { EmailBridge, type EmailCred } from './email-bridge.ts'
+import { FeishuBridge } from './feishu-bridge.ts'
 
 /** 每个聊天最多保留的独立会话数（超出后淘汰最早创建的，释放上下文）。 */
 const DEFAULT_MAX_CHAT_AGENTS = 40
@@ -376,6 +377,8 @@ export class BridgeManager {
     this.qq = null
     this.email?.stop()
     this.email = null
+    this.feishu?.stop()
+    this.feishu = null
 
     // 2. 清除在途轮询与心跳定时器
     this.finishAllPending()
@@ -673,30 +676,33 @@ export class BridgeManager {
         return r.errcode === 0 ? { ok: true, detail: 'sent' } : { ok: false, detail: r.errmsg ?? 'dingtalk send failed' }
       }
       case 'feishu': {
-        // 飞书自定义机器人 Webhook 推送
-        const rawUrl = target.startsWith('http') ? target : `https://open.feishu.cn/open-apis/bot/v2/hook/${encodeURIComponent(target)}`
-        const payload: Record<string, unknown> = {
-          msg_type: 'text',
-          content: { text: text },
+        if (this.feishu) {
+          const sent = await this.feishu.sendMessage(target, text, target.startsWith('oc_') ? 'chat_id' : (target.startsWith('ou_') ? 'open_id' : 'chat_id'))
+          return sent ? { ok: true, detail: 'sent' } : { ok: false, detail: 'feishu sendMessage failed' }
         }
+        // 若桥未连接但有自建应用凭据，通过 REST API 发送
         const { loadStore } = await import('./gateway-store.ts')
         const store = await loadStore()
-        const secret = store.platforms.feishu?.secret
-        if (secret) {
-          const { createHmac } = await import('node:crypto')
-          const timestamp = Math.floor(Date.now() / 1000)
-          const stringToSign = `${timestamp}\n${secret}`
-          const sign = createHmac('sha256', stringToSign).digest('base64')
-          payload.timestamp = String(timestamp)
-          payload.sign = sign
+        const appId = store.platforms.feishu?.appId
+        const appSecret = store.platforms.feishu?.appSecret
+        if (appId && appSecret) {
+          try {
+            const lark = await import('@larksuiteoapi/node-sdk')
+            const client = new lark.Client({ appId, appSecret })
+            await client.im.message.create({
+              params: { receive_id_type: target.startsWith('oc_') ? 'chat_id' : (target.startsWith('ou_') ? 'open_id' : 'chat_id') },
+              data: {
+                receive_id: target,
+                msg_type: 'text',
+                content: JSON.stringify({ text }),
+              },
+            })
+            return { ok: true, detail: 'sent' }
+          } catch (err) {
+            return { ok: false, detail: `feishu client send failed: ${err instanceof Error ? err.message : String(err)}` }
+          }
         }
-        const resp = await fetch(rawUrl, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(payload),
-        })
-        const r = (await resp.json().catch(() => ({}))) as { code?: number; msg?: string; StatusCode?: number }
-        return (r.code === 0 || r.StatusCode === 0) ? { ok: true, detail: 'sent' } : { ok: false, detail: r.msg ?? 'feishu send failed' }
+        return { ok: false, detail: 'feishu not configured or bridge not started' }
       }
       case 'bark': {
         // Bark iOS 推送
@@ -891,6 +897,43 @@ export class BridgeManager {
   private discord: { start(): void; stop(): void; send(channelId: string, content: string): Promise<boolean>; sendImage(channelId: string, image: Buffer, content?: string, filename?: string): Promise<boolean>; status: BridgeStatus } | null = null
   private qq: { start(): void; stop(): void; status: BridgeStatus } | null = null
   private email: { start(): void; stop(): void; send(to: string, subject: string, content: string): Promise<boolean>; status: BridgeStatus } | null = null
+  private feishu: FeishuBridge | null = null
+
+  /** 启动 Feishu 桥（企业自建应用 WebSocket 长连接）。 */
+  startFeishu(cred: Record<string, string>): void {
+    this.feishu?.stop()
+    const bridge = new FeishuBridge(
+      { appId: cred.appId ?? '', appSecret: cred.appSecret ?? '' },
+      {
+        onStatus: (status) => this.onStatusCallback?.(status),
+        onText: (text, frame) => {
+          const identity: ChatIdentity = {
+            key: `feishu:${frame.chatId}`,
+            frame,
+            sink: {
+              stream: (_f, _streamId, content, finish) => {
+                // 飞书采用引用回复或消息发送，finish=true 时发出完整定稿
+                if (finish && content.trim()) {
+                  void bridge.replyMessage(frame.messageId, content)
+                }
+              },
+              ack: false,
+            },
+            chatType: frame.chatType,
+          }
+          void this.handleExternalMessage(identity, text)
+        },
+      },
+    )
+    this.feishu = bridge
+    bridge.start()
+  }
+
+  /** 停止 Feishu 桥。 */
+  stopFeishu(): void {
+    this.feishu?.stop()
+    this.feishu = null
+  }
 
   /** 启动 Telegram 桥（长轮询）。 */
   startTelegram(cred: Record<string, string>): void {
@@ -970,12 +1013,13 @@ export class BridgeManager {
     this.email = null
   }
 
-  /** 任意桥接平台的状态（telegram/discord/qq/email）。 */
+  /** 任意桥接平台的状态（telegram/discord/qq/email/feishu）。 */
   bridgeStatus(id: string): BridgeStatus {
     if (id === 'telegram') return this.telegram?.status ?? { state: 'idle', detail: '', connectedAt: null }
     if (id === 'discord') return this.discord?.status ?? { state: 'idle', detail: '', connectedAt: null }
     if (id === 'qq') return this.qq?.status ?? { state: 'idle', detail: '', connectedAt: null }
     if (id === 'email') return this.email?.status ?? { state: 'idle', detail: '', connectedAt: null }
+    if (id === 'feishu') return this.feishu?.status ?? { state: 'idle', detail: '', connectedAt: null }
     return { state: 'idle', detail: '', connectedAt: null }
   }
 
@@ -1056,6 +1100,7 @@ export class BridgeManager {
         bridgeLine('Discord', this.bridgeStatus('discord')),
         bridgeLine('QQ', this.bridgeStatus('qq')),
         bridgeLine('Email', this.bridgeStatus('email')),
+        bridgeLine('Feishu', this.bridgeStatus('feishu')),
       ]
       reply(lines.join('\n'))
       return true

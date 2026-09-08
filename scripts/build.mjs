@@ -52,6 +52,7 @@ await Promise.all([
       '@deepseek-ai/dsh-session',
       '@deepseek-ai/dsh-llm',
       '@wecom/aibot-node-sdk',
+      '@larksuiteoapi/node-sdk',
     ],
     sourcemap: true,
     logLevel: 'warning',

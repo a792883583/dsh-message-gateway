@@ -2,6 +2,22 @@
 
 本文件记录 `dsh-message-gateway` 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.1.30] - 2026-09-08
+
+### Added
+
+- **飞书开放平台企业自建应用原生支持**：
+  - 基于官方 `@larksuiteoapi/node-sdk` 的 `WSClient` 接入 WebSocket 长连接事件订阅，无需公网 IP 或内网穿透
+  - 支持飞书单聊私聊与群聊 `@机器人` 自动识别与独立 Agent 会话接入
+  - 支持流式结束时的富文本与引用回复机制（`im.message.reply` / `im.message.create`）
+  - 前端面板提供专用 App ID 与 App Secret 配置表单，并支持中、英、西三语无缝国际化
+  - 增强构建脚本，正确将 `@larksuiteoapi/node-sdk` 外部化以防止 ESM 动态加载 CJS 的 `util` 模块崩溃
+
+### Fixed
+
+- **飞书配置删除生命周期修复**：在 Web 界面点击「删除配置」时同步调用 `manager.stopFeishu()`，彻底销毁内存中的 WebSocket 长连接，杜绝凭据已删而长连接仍假死存活的状态不一致问题
+- **飞书主动消息推送适配**：适配 `send_chat_message` 工具的主动推送逻辑，支持通过飞书自建应用 API 向指定的 `chat_id` / `open_id` 发送主动通知消息
+
 ## [0.1.29] - 2026-09-08
 
 ### Added

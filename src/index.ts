@@ -73,6 +73,11 @@ export function apply(ctx: Context, config: GatewayConfig = Config({} as Gateway
         manager.startEmail(email)
         console.log('[dsh-message-gateway] email bridge auto-started')
       }
+      const feishu = store.platforms.feishu
+      if (config.autoStartFeishu && feishu !== undefined && feishu.appId !== '' && feishu.appSecret !== '') {
+        manager.startFeishu(feishu)
+        console.log('[dsh-message-gateway] feishu bridge auto-started')
+      }
     })
     const disposeRoutes = registerGatewayRoutes(ctx, manager)
     // 注册通用 Agent 工具：① send_chat_message ② wecom_create_smartsheet
@@ -80,12 +85,12 @@ export function apply(ctx: Context, config: GatewayConfig = Config({} as Gateway
     if (ctx.tools) {
       const disposeSend = ctx.tools.register(defineTool({
         name: 'send_chat_message',
-        description: '向已连接的消息平台（Telegram / Discord / 企业微信智能机器人 / Email 等）主动推送文本消息。例如把代码总结、任务结果推送至指定的群聊或私信频道。',
+        description: '向已连接的消息平台（Telegram / Discord / 企业微信智能机器人 / 飞书 / Email 等）主动推送文本消息。例如把代码总结、任务结果推送至指定的群聊或私信频道。',
         parameters: {
           platform: {
             type: 'string',
             required: true,
-            description: '目标平台 id：telegram / discord / wecom-aibot / email',
+            description: '目标平台 id：telegram / discord / wecom-aibot / feishu / email',
           },
           target: {
             type: 'string',

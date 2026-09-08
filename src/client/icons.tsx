@@ -79,6 +79,10 @@ export const EmailIcon = (props: { size?: number }): React.ReactElement =>
 export const WebhookIcon = (props: { size?: number }): React.ReactElement =>
   Icon({ d: 'M18 8a3 3 0 0 1 3 3c0 1-.5 1.9-1.3 2.4M12 4l3 6M4 14l3-6M6 8a3 3 0 0 1 3 3c0 .8-.3 1.5-.8 2M4 14h8a2 2 0 0 1 2 2 2 2 0 0 1-2 2H4a2 2 0 0 1-2-2 2 2 0 0 1 2-2z', ...props })
 
+/** 飞书纸飞机/羽翼。 */
+export const FeishuIcon = (props: { size?: number }): React.ReactElement =>
+  Icon({ d: 'M2.5 12l19-9-9 19-2-8-8-2zm8 0l11-9', ...props })
+
 /** 平台 id → 线性图标。 */
 export const PlatformIcon = (props: { platform: string; size?: number }): React.ReactElement => {
   const { platform, size } = props
@@ -92,6 +96,7 @@ export const PlatformIcon = (props: { platform: string; size?: number }): React.
     case 'wechat-mp': return createElement(MpIcon, { size })
     case 'whatsapp': return createElement(WhatsappIcon, { size })
     case 'email': return createElement(EmailIcon, { size })
+    case 'feishu': return createElement(FeishuIcon, { size })
     case 'webhooks': return createElement(WebhookIcon, { size })
     default: return createElement(InboxIcon, { size })
   }

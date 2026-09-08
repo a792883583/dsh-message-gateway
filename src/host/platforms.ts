@@ -129,8 +129,8 @@ export const PLATFORMS: PlatformDef[] = [
     testable: true,
     hintKey: 'platform.feishu.hint',
     fields: [
-      { key: 'webhookUrl', labelKey: 'field.webhookUrl', placeholderKey: 'field.feishuWebhook.ph', kind: 'text' },
-      { key: 'secret', labelKey: 'field.feishuSecret', placeholderKey: 'field.secret.ph', kind: 'secret' },
+      { key: 'appId', labelKey: 'field.feishuAppId', placeholderKey: 'field.feishuAppId.ph', kind: 'text' },
+      { key: 'appSecret', labelKey: 'field.feishuAppSecret', placeholderKey: 'field.feishuAppSecret.ph', kind: 'secret' },
     ],
   },
   {
@@ -312,12 +312,28 @@ export async function testPlatform(id: string, cred: Record<string, string>): Pr
       return { ok: false, detail: r.errmsg ?? `HTTP ${status}` }
     }
     case 'feishu': {
-      // 飞书自定义机器人 Webhook 测试
+      // 飞书开放平台企业自建应用鉴权测试
+      const appId = cred.appId ?? ''
+      const appSecret = cred.appSecret ?? ''
+      if (appId && appSecret) {
+        const { status, body } = await httpJson('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+        })
+        const r = body as { code?: number; msg?: string; tenant_access_token?: string }
+        if (r.code === 0 && r.tenant_access_token) {
+          return { ok: true, detail: '飞书应用鉴权成功（长连接已就绪）' }
+        }
+        return { ok: false, detail: r.msg ?? `HTTP ${status}` }
+      }
+
+      // 兼容旧版 Webhook 模式
       const rawUrl = cred.webhookUrl ?? ''
-      if (!rawUrl.startsWith('http')) return { ok: false, detail: '无效的 Webhook URL' }
+      if (!rawUrl.startsWith('http')) return { ok: false, detail: '请填写 App ID 与 App Secret' }
       const payload: Record<string, unknown> = {
         msg_type: 'text',
-        content: { text: '🔌 [DSH Message Gateway] 飞书自定义机器人连接测试成功！' },
+        content: { text: '🔌 [DSH Message Gateway] 飞书连接测试成功！' },
       }
       if (cred.secret) {
         const { createHmac } = await import('node:crypto')

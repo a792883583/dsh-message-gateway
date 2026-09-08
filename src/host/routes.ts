@@ -76,7 +76,7 @@ async function buildView(manager: BridgeManager): Promise<GatewayView> {
     let state: PlatformStatus['state'] = stored?.state ?? (def.id === 'wechat' || def.id === 'webhooks' ? 'manual' : 'none')
     let detail = stored?.detail ?? ''
     let testedAt = stored?.testedAt ?? null
-    if (def.id === 'wecom-aibot' || def.id === 'telegram' || def.id === 'discord' || def.id === 'qq' || def.id === 'email') {
+    if (def.id === 'wecom-aibot' || def.id === 'telegram' || def.id === 'discord' || def.id === 'qq' || def.id === 'email' || def.id === 'feishu') {
       const merged = manager.mergeStatus(stored, def.id)
       state = merged.state
       detail = merged.detail
@@ -468,6 +468,7 @@ export function registerGatewayRoutes(ctx: Context, manager: BridgeManager): () 
             if (platform === 'discord') manager.stopDiscord()
             if (platform === 'qq') manager.stopQQ()
             if (platform === 'email') manager.stopEmail()
+            if (platform === 'feishu') manager.stopFeishu()
             json(res, { ok: true, value: await buildView(manager) })
             return
           }
@@ -510,6 +511,13 @@ export function registerGatewayRoutes(ctx: Context, manager: BridgeManager): () 
                 manager.startEmail(credentials)
               } else {
                 manager.stopEmail()
+              }
+            }
+            if (platform === 'feishu') {
+              if (credentials.appId !== undefined && credentials.appId !== '' && credentials.appSecret !== undefined && credentials.appSecret !== '') {
+                manager.startFeishu(credentials)
+              } else {
+                manager.stopFeishu()
               }
             }
             json(res, { ok: true, value: await buildView(manager) })
