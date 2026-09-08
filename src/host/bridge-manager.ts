@@ -101,9 +101,12 @@ export class BridgeManager {
   }
 
   /** 轮询注入会话的事件流：chunk → 流式推送；assistant/message → 定稿 + HTTP。 */
-  private pollPending(key: string, p: PendingReply, session: { events?: readonly SessionEvent[] } | null | undefined): void {
-    if (!session || !Array.isArray(session.events)) return
-    const events = session.events
+  private pollPending(key: string, p: PendingReply, session: any): void {
+    if (!session) return
+    const events: readonly SessionEvent[] = typeof session.snapshotEvents === 'function'
+      ? session.snapshotEvents()
+      : (Array.isArray(session.events) ? session.events : [])
+    if (!Array.isArray(events)) return
     try {
       for (let i = p.cursor; i < events.length; i += 1) {
         p.cursor = i + 1
@@ -473,7 +476,9 @@ export class BridgeManager {
           clearInterval(poll)
           return
         }
-        const events = session.events
+        const events: readonly SessionEvent[] = typeof (session as any).snapshotEvents === 'function'
+          ? (session as any).snapshotEvents()
+          : (Array.isArray((session as any).events) ? (session as any).events : [])
         for (let i = cursor; i < events.length; i += 1) {
           const event = events[i]
           if (event.type === 'assistant/message') {

@@ -2,6 +2,12 @@
 
 本文件记录 `dsh-message-gateway` 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.1.27] - 2026-09-08
+
+### Fixed
+
+- **会话事件流适配官方 `snapshotEvents()` 接口**：DSH 内部 `Session` 实例无 `session.events` 属性，应调用官方 `session.snapshotEvents()` 读取不可变事件快照；修复后企微机器人能即时感知 AI 思考及回复流，彻底恢复秒级响应与正常回传
+
 ## [0.1.26] - 2026-09-08
 
 ### Fixed
