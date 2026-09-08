@@ -101,40 +101,46 @@ export class BridgeManager {
   }
 
   /** 轮询注入会话的事件流：chunk → 流式推送；assistant/message → 定稿 + HTTP。 */
-  private pollPending(key: string, p: PendingReply, session: { events: readonly SessionEvent[] }): void {
+  private pollPending(key: string, p: PendingReply, session: { events?: readonly SessionEvent[] } | null | undefined): void {
+    if (!session || !Array.isArray(session.events)) return
     const events = session.events
-    for (let i = p.cursor; i < events.length; i += 1) {
-      p.cursor = i + 1
-      const event = events[i]
-      if (event.type === 'assistant/chunk') {
-        const chunk = (event as SessionEvent<'assistant/chunk'>).data.chunk
-        if (chunk.type === 'text-delta') {
-          p.buffer += chunk.text
-          this.scheduleStream(p)
+    try {
+      for (let i = p.cursor; i < events.length; i += 1) {
+        p.cursor = i + 1
+        const event = events[i]
+        if (!event) continue
+        if (event.type === 'assistant/chunk') {
+          const chunk = (event as SessionEvent<'assistant/chunk'>).data?.chunk
+          if (chunk && chunk.type === 'text-delta' && typeof chunk.text === 'string') {
+            p.buffer += chunk.text
+            this.scheduleStream(p)
+          }
+          continue
         }
-        continue
-      }
-      if (event.type === 'assistant/message') {
-        const text = extractText((event as SessionEvent<'assistant/message'>).data.message)
-        // 跳过空消息与纯工具调用消息：工具调用轮/中间步骤会产出空 assistant/message
-        // 或整段 XML 工具调用文本，真正完成时才有可发送的正文。
-        if (text === '' || isToolCallOnly(text)) continue
-        p.buffer = text
-        const streamed = p.pushed
-        console.log('[dsh-message-gateway] assistant done', { key, seq: event.seq, len: p.buffer.length })
-        void this.pushStream(p, true)
-        void this.deliverHttp(p, streamed)
-        this.finishPending(key)
-        return
-      }
-      if (event.type === 'turn/end') {
-        // 轮次结束收尾
-        if (p.buffer !== '') {
+        if (event.type === 'assistant/message') {
+          const text = extractText((event as SessionEvent<'assistant/message'>).data?.message)
+          // 跳过空消息与纯工具调用消息：工具调用轮/中间步骤会产出空 assistant/message
+          // 或整段 XML 工具调用文本，真正完成时才有可发送的正文。
+          if (text === '' || isToolCallOnly(text)) continue
+          p.buffer = text
+          const streamed = p.pushed
+          console.log('[dsh-message-gateway] assistant done', { key, seq: event.seq, len: p.buffer.length })
           void this.pushStream(p, true)
+          void this.deliverHttp(p, streamed)
           this.finishPending(key)
           return
         }
+        if (event.type === 'turn/end') {
+          // 轮次结束收尾
+          if (p.buffer !== '') {
+            void this.pushStream(p, true)
+            this.finishPending(key)
+            return
+          }
+        }
       }
+    } catch (err) {
+      console.error('[dsh-message-gateway] pollPending error', err)
     }
   }
 
@@ -415,8 +421,12 @@ export class BridgeManager {
       console.log('[dsh-message-gateway] sent to agent', { key: id.key, text: sanitizeSecrets(text.slice(0, 60)), baseSeq: p.cursor })
       // 轮询事件快照：chunk 流式推送、assistant/message 定稿。
       p.timer = setInterval(() => {
-        if (this.pendingMap.get(id.key) !== p) return
-        this.pollPending(id.key, p, session)
+        try {
+          if (this.pendingMap.get(id.key) !== p) return
+          this.pollPending(id.key, p, session)
+        } catch (pollErr) {
+          console.error('[dsh-message-gateway] timer pollPending caught error', pollErr)
+        }
       }, 400)
       // 兜底超时（2 分钟无完成事件 → 强制超时收尾清理）。
       p.fallback = setTimeout(() => {

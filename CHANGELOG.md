@@ -2,6 +2,12 @@
 
 本文件记录 `dsh-message-gateway` 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.1.26] - 2026-09-08
+
+### Fixed
+
+- **企微机器人消息轮询崩溃修复**：`pollPending` 在会话刚初始化或异步未就绪时直接读取 `session.events.length` 导致 `TypeError: Cannot read properties of undefined (reading 'length')`，进而在未捕获异步定时器中导致 Node.js 主进程崩溃重启；现增加安全空值断言、类型收窄与定时器内部 `try...catch` 兜底保护，彻底根治发消息触发 dsh web 重启问题
+
 ## [0.1.25] - 2026-09-07
 
 ### Fixed
