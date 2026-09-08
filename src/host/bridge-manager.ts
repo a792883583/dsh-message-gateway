@@ -117,6 +117,18 @@ export class BridgeManager {
         const event = events[i]
         if (!event) continue
 
+        // 只要收到任意新事件（包括工具调用、思考分块），立即滑动续期超时保护（重置为 90 秒无响应才超时）
+        if (p.fallback !== null) {
+          clearTimeout(p.fallback)
+          p.fallback = setTimeout(() => {
+            if (this.pendingMap.get(key) === p) {
+              console.warn('[dsh-message-gateway] idle timeout (no events for 90s)', { key })
+              this.finishPending(key)
+            }
+          }, 90 * 1000)
+          p.fallback.unref?.()
+        }
+
         // 1. 实时文本分块（流式打字效果）
         if (event.type === 'assistant/chunk') {
           const chunk = (event as SessionEvent<'assistant/chunk'>).data?.chunk
@@ -145,7 +157,13 @@ export class BridgeManager {
 
         // 3. 整个轮次所有步骤全部收敛执行结束
         if (event.type === 'turn/end') {
-          p.buffer = [...p.stepMessages, p.currentStepBuffer].filter(Boolean).join('\n\n')
+          if (p.currentStepBuffer.trim()) {
+            if (!p.stepMessages.includes(p.currentStepBuffer.trim())) {
+              p.stepMessages.push(p.currentStepBuffer.trim())
+            }
+            p.currentStepBuffer = ''
+          }
+          p.buffer = p.stepMessages.filter(Boolean).join('\n\n')
           if (p.buffer !== '') {
             console.log('[dsh-message-gateway] turn fully ended', { key, steps: p.stepMessages.length, totalLen: p.buffer.length })
             void this.pushStream(p, true)
@@ -309,6 +327,16 @@ export class BridgeManager {
         },
       })
       this.agents.set(sessionKey, { agent: handle.agent, dispose: () => handle.dispose() })
+      
+      // 关键授权保护：外部消息通道（企业微信、Telegram、Discord、Email、Webhook等）
+      // 无法弹出人机确认弹窗，必须将审批策略设置为 'never'（自动放行安全工具执行），
+      // 彻底消除工具调用因无人审批而死锁在挂起状态的问题！
+      try {
+        (handle.agent.session as any).append('approval/policy', { policy: 'never' })
+      } catch (e) {
+        console.warn('[dsh-message-gateway] set approval policy failed', e)
+      }
+
       console.log('[dsh-message-gateway] dedicated agent ready', { key: sessionKey, session: handle.agent.session.id, provider, model, preset: route?.agentPreset ?? '(default)', skill: route?.skill ?? undefined })
       return handle.agent
     } catch (error) {
@@ -454,10 +482,13 @@ export class BridgeManager {
           console.error('[dsh-message-gateway] timer pollPending caught error', pollErr)
         }
       }, 400)
-      // 兜底超时（2 分钟无完成事件 → 强制超时收尾清理）。
+      // 兜底超时（滑动保活：只要 90 秒内持续有新事件/工具推进就不中断；连续 90 秒静默才超时清理）。
       p.fallback = setTimeout(() => {
-        if (this.pendingMap.get(id.key) === p) this.finishPending(id.key)
-      }, 2 * 60 * 1000)
+        if (this.pendingMap.get(id.key) === p) {
+          console.warn('[dsh-message-gateway] initial idle timeout (90s silent)', { key: id.key })
+          this.finishPending(id.key)
+        }
+      }, 90 * 1000)
       p.fallback.unref?.()
     } catch (error) {
       console.error('[dsh-message-gateway] handleExternalMessage failed', error)

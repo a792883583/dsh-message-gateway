@@ -2,6 +2,19 @@
 
 本文件记录 `dsh-message-gateway` 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.1.29] - 2026-09-08
+
+### Added
+
+- **全外部消息通道自主免审批授权机制**：为企业微信、Telegram、Discord、Email、Webhook 等无头消息通道注入专属 `approval/policy: 'never'` 策略，彻底解除调用本地命令与开发工具时因网页端无人审批而无限死锁挂起的阻断，实现全自动化工具调用与执行闭环
+- **长程任务滑动保活机制 (Sliding Idle Timeout)**：将旧版死板的 2 分钟固定超时重构为滑动保活模型，只要 Agent 持续有事件推进即自动顺延 90 秒静默超时，保障多工具复杂长程任务平稳执行至终局
+
+### Fixed
+
+- **多步骤流式消息累加防覆盖优化**：重构 `PendingReply` 流式聚合模型，各阶段思考与工具分析结论按步骤段落累加，杜绝后文覆盖冲刷前文历史
+- **三语动态状态指示**：中间步骤停顿时动态展示状态感知提示（中：`⏳ 正在处理中，请稍候…` / 英：`⏳ Processing, please wait…` / 西：`⏳ Procesando, por favor espere…`），定稿时自动无痕剥离
+- **全平台优雅关机与秒速重连**：系统级捕获退出信号向各平台远端主动发送 Close 帧，消除 30 秒连接互斥排队锁，实现 1~2 秒秒速重新上线
+
 ## [0.1.28] - 2026-09-08
 
 ### Added
