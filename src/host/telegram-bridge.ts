@@ -7,17 +7,20 @@
 
 import type { BridgeStatus } from './wecom-bridge.ts'
 import type { ChatIdentity, ReplySink } from './bridge-manager.ts'
+import type { IncomingAttachment } from './incoming.ts'
 import { getProxyDispatcher } from './proxy.ts'
 
 export interface TelegramBridgeCallbacks {
   onStatus(status: BridgeStatus): void
-  onText(text: string, identity: ChatIdentity): void
+  onText(text: string, identity: ChatIdentity, attachments?: IncomingAttachment[]): void
 }
 
 /** 流式编辑限频（Telegram 约 1 次/秒/聊天）。 */
 const EDIT_INTERVAL_MS = 1200
 const MSG_LIMIT = 4096
 const POLL_TIMEOUT = 25
+/** 官方文档：Bot 可下载文件上限 20MB（超出需 Local Bot API Server）。 */
+const TG_DOWNLOAD_LIMIT = 20 * 1024 * 1024
 
 export class TelegramBridge {
   private stopped = false
@@ -85,7 +88,7 @@ export class TelegramBridge {
       const updates = result as Array<{ update_id: number; message?: Record<string, unknown> }>
       for (const update of updates) {
         this.offset = Math.max(this.offset, update.update_id + 1)
-        if (update.message !== undefined) this.handleMessage(update.message)
+        if (update.message !== undefined) void this.handleMessage(update.message)
       }
     } else {
       // getUpdates 失败（网络/限流）：退避 3 秒后重试，避免空转。
@@ -95,13 +98,59 @@ export class TelegramBridge {
     if (!this.stopped) this.pollTimer = setTimeout(() => void this.poll(), 0)
   }
 
-  private handleMessage(m: Record<string, unknown>): void {
+  private async handleMessage(m: Record<string, unknown>): Promise<void> {
     const from = m.from as { is_bot?: boolean } | undefined
     if (from?.is_bot === true) return
-    const text = typeof m.text === 'string' ? m.text.trim() : ''
-    if (text === '') return
     const chat = m.chat as { id: number; type?: string } | undefined
     if (chat === undefined) return
+    const caption = typeof m.caption === 'string' ? m.caption.trim() : ''
+    let text = typeof m.text === 'string' ? m.text.trim() : ''
+    if (text === '') text = caption
+    const notes: string[] = []
+    const attachments: IncomingAttachment[] = []
+
+    // ---- 附件（官方文档探测顺序：animation → photo → document → video → video_note → voice → audio → sticker）----
+    if (Array.isArray(m.photo) && m.photo.length > 0) {
+      // photo 是 PhotoSize[]，官方未保证有序：显式挑「最大」一张。
+      const sizes = m.photo as Array<{ file_id?: string; width?: number; height?: number; file_size?: number }>
+      const best = sizes.reduce((a, b) => {
+        const sa = a.file_size ?? (a.width ?? 0) * (a.height ?? 0)
+        const sb = b.file_size ?? (b.width ?? 0) * (b.height ?? 0)
+        return sb > sa ? b : a
+      })
+      if (best.file_id !== undefined) {
+        const data = await this.downloadTelegramFile(best.file_id)
+        if (data !== null) attachments.push({ kind: 'image', data })
+        else notes.push('（图片下载失败）')
+      }
+    } else {
+      const mediaKeys = ['animation', 'document', 'video', 'video_note', 'voice', 'audio', 'sticker'] as const
+      for (const key of mediaKeys) {
+        const media = m[key] as { file_id?: string; file_name?: string; mime_type?: string; file_size?: number } | undefined
+        if (media?.file_id === undefined) continue
+        const size = media.file_size ?? 0
+        if (size > TG_DOWNLOAD_LIMIT) {
+          notes.push(`（${key} 超过官方 20MB 下载上限，未下载）`)
+          break
+        }
+        const data = await this.downloadTelegramFile(media.file_id)
+        if (data !== null) {
+          attachments.push({ kind: 'file', data, name: media.file_name, mediaType: media.mime_type })
+        } else {
+          notes.push(`（${key} 下载失败）`)
+        }
+        break
+      }
+    }
+
+    // 绝不静默丢弃：携带内容但未识别的类型给出可见提示；纯系统消息不打扰。
+    if (text === '' && attachments.length === 0 && notes.length === 0) {
+      const contentKeys = ['contact', 'location', 'venue', 'poll', 'dice', 'game', 'forward_origin']
+      if (!contentKeys.some((k) => m[k] !== undefined)) return
+      text = '（收到该类型 Telegram 消息，暂不支持处理）'
+    }
+    if (text === '' && notes.length > 0) text = notes.join('\n')
+
     const frame = { chatId: chat.id, messageId: m.message_id ?? 0, chatType: chat.type ?? 'private' }
     const sink: ReplySink = {
       stream: (f, sid, content, finish) => void this.streamReply(f as typeof frame, sid, content, finish),
@@ -112,8 +161,27 @@ export class TelegramBridge {
       sink,
       chatType: (chat.type ?? 'private') === 'private' ? 'single' : 'group',
     }
-    console.log('[dsh-message-gateway] telegram text', { chatId: chat.id, text: text.slice(0, 60) })
-    this.callbacks.onText(text, identity)
+    console.log('[dsh-message-gateway] telegram text', { chatId: chat.id, text: text.slice(0, 60), atts: attachments.length })
+    this.callbacks.onText(text, identity, attachments.length > 0 ? attachments : undefined)
+  }
+
+  /** 官方文档：getFile(file_id) → file_path → https://api.telegram.org/file/bot<token>/<file_path>。 */
+  private async downloadTelegramFile(fileId: string): Promise<Uint8Array | null> {
+    try {
+      const result = (await this.api('getFile', { file_id: fileId })) as { result?: { file_path?: string } }
+      const filePath = result?.result?.file_path
+      if (filePath === undefined || filePath === '') return null
+      const dispatcher = await getProxyDispatcher()
+      const response = await fetch(`https://api.telegram.org/file/bot${this.token}/${filePath}`, {
+        signal: AbortSignal.timeout(60_000),
+        ...(dispatcher ? { dispatcher } : {}),
+      } as RequestInit)
+      if (!response.ok) return null
+      return new Uint8Array(await response.arrayBuffer())
+    } catch (error) {
+      console.warn('[dsh-message-gateway] telegram download failed', fileId, String(error))
+      return null
+    }
   }
 
   /** 流式回复：状态合并 + 单 worker——首次 sendMessage，随后 editMessageText 渐进更新（限频）。 */

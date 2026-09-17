@@ -47,6 +47,12 @@ Un plugin de pasarela de mensajería para la GUI web de DSH: una entrada "Plataf
   - **Reglas de enrutado de mensajes** (`routes`)
   - **Herramienta de push para agentes** (`send_chat_message`): registra automáticamente una herramienta para que los agentes envíen resúmenes, resultados o alertas (incluyendo imágenes y capturas de pantalla)
 - **Endpoint de recepción de webhooks**: `POST /gateway/webhook/in`
+- **Recepción de imágenes y archivos adjuntos (todas las plataformas)**: cada plataforma analiza y descarga los adjuntos según su documentación oficial y los entrega al Agente
+  - **Imágenes** → se guardan en el almacén de adjuntos y se pasan al modelo como **contenido multimodal** (el modelo ve realmente la imagen)
+  - **Cualquier otro archivo** (PDF / Excel / Word / comprimidos…) → se entrega al Agente como un descriptor de «nombre + tamaño + **ruta de solo lectura**», que el Agente lee con sus herramientas de archivos
+  - Cubierto: bot de WeCom (`image` / `file` / `video` / `mixed`), Feishu (`image` / `file` / `audio` / `media` / texto enriquecido `post`), DingTalk (`picture` / `richText` / `audio` / `video` / `file`), Telegram (`photo` / `document` / `animation` / `video` / `voice` / `audio` / `video_note` / `sticker`, con `caption`), Discord (`attachments[]`), bot de QQ (`attachments[]`, con recursión de mensajes citados y `asr_refer_text` de voz), WeChat iLink (`item_list` imagen / voz / archivo / vídeo, con descifrado AES del CDN), Email (adjuntos MIME estándar, nombres chinos RFC 2231, decodificación base64 / quoted-printable)
+  - **Nunca se descarta en silencio**: cualquier tipo de mensaje no reconocido recibe un aviso visible (p. ej. «se recibió este tipo de mensaje, aún no compatible») — nunca enviarás algo sin recibir respuesta
+  - Cada plataforma tiene sus propios **límites oficiales** — ver «[Límites oficiales de las plataformas](#límites-oficiales-de-las-plataformas-no-son-un-fallo-del-plugin)» abajo
 - **Multilingüe**: chino / inglés / español, siguiendo el idioma de la interfaz web de DSH
 - Tema claro / oscuro siguiendo la GUI web de DSH
 
@@ -77,6 +83,29 @@ Todas las opciones tienen valores por defecto y el plugin funciona de inmediato;
 | `maxChatAgents` | number | `40` | Máximo de sesiones de chat por bot; se elimina la más antigua al superarlo |
 | `autoStartWecom` | boolean | `true` | Conectar automáticamente el Bot de IA de WeCom con las credenciales guardadas al iniciar |
 | `groupReply` | boolean | `true` | Responder mensajes de grupo (false = solo chats individuales) |
+
+## Límites oficiales de las plataformas (no son un fallo del plugin)
+
+Todos los límites siguientes provienen de la **frontera de capacidad de la API oficial de cada plataforma** (verificable en su documentación). No son fallos de este plugin y **no se pueden evitar modificándolo**:
+
+| Plataforma | Límite oficial | Notas |
+| --- | --- | --- |
+| Bot de WeCom | **Los mensajes de imagen solo funcionan en chat privado** | Documentación oficial: `image` solo en chat privado; en un **grupo, mencionar al bot con una imagen llega como `mixed`** (texto enriquecido + imagen). Este plugin admite ambos |
+| Bot de WeCom | Las URL de medios valen **5 minutos**, `aeskey` es único por enlace | La documentación exige descargar de inmediato; si caduca, el usuario debe reenviarlo |
+| Bot de WeCom | Límite de callback de archivo / vídeo **100MB** | Límite oficial |
+| DingTalk | **Las menciones en grupo no reciben `audio` / `video` / `file`** | Documentación oficial: los grupos solo admiten `text` / `picture` / `richText`; voz, vídeo y archivos solo en **chat privado** |
+| DingTalk | `downloadCode` caduca | Hay que canjearlo por una URL de descarga cuanto antes; si no, `invalidParameter.robotCode.downloadCode` |
+| Feishu | **Los stickers (`sticker`) no se pueden descargar** | La documentación oficial no ofrece recursos de sticker; este plugin responde con un aviso visible |
+| Feishu | Recursos de texto enriquecido / tarjetas y submensajes reenviados no se pueden descargar | Limitación oficial (devuelve `234043`) |
+| Telegram | **Límite de descarga de 20MB** | Documentación oficial: los bots descargan hasta 20MB; más requiere un **Local Bot API Server** propio. Este plugin avisa de que no lo descargó |
+| Discord | **Se requiere el intent privilegiado `MESSAGE_CONTENT`** | Documentación oficial: sin él, `content` / `embeds` / `attachments` están **siempre vacíos** y el plugin no ve los adjuntos. Solicítalo y espera aprobación en el portal de desarrolladores |
+| Discord | Los embeds externos no se descargan | Por diseño este plugin **no descarga** enlaces externos proporcionados por el usuario (seguridad SSRF); solo pasa título y URL al Agente como texto |
+| Bot de QQ | Los encabezados y la validez de la `url` de adjuntos **no están documentados** | Este plugin hace un GET HTTPS normal (la documentación no exige encabezados especiales ni indica caducidad) |
+| WeChat iLink | **Sin documentación oficial pública** | Es una interfaz interna / semipública de Tencent; los nombres de campo y el descifrado provienen del **paquete npm oficial de Tencent**. Fiables, pero sin contrato documentado: la plataforma puede cambiar sin aviso |
+| Todas | **El vídeo / la voz no se "ven" ni se "oyen"** | Los modelos no entienden audio o vídeo de forma nativa. Este plugin los entrega como **archivos** (nombre + ruta de solo lectura) para que el Agente los lea o transcriba con herramientas |
+| Email | Los adjuntos con codificación `8bit` / `binary` se leen como literales de texto | La implementación IMAP obtiene las partes como literales de texto; `base64` / `quoted-printable` (la inmensa mayoría) se decodifican con exactitud, `8bit`/`binary` es un caso raro |
+
+> Si lo que ves **no** aparece en esta tabla, probablemente sea un fallo del plugin — abre un [Issue](https://github.com/a792883583/dsh-message-gateway/issues).
 
 ## Documentación
 

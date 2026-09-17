@@ -2,6 +2,30 @@
 
 本文件记录 `dsh-message-gateway` 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.1.34] - 2026-09-17
+
+### Added
+
+- **图片与文件附件接收（全平台）**：此前所有平台**只处理纯文本**，用户发图片或文件会被静默丢弃、毫无回复。现按各平台官方文档实现附件接收：
+  - **图片** → 经 `ctx.attachments.saveImage` 存为 `ImageBlock`，以**多模态**交给模型（真正"看见"图片）；平台 MIME 不在支持集合（png / jpeg / webp / gif）或字节校验失败时自动退化为文件块
+  - **其它文件**（PDF / Excel / Word / 压缩包等任意类型）→ 经 `saveFile` 存为 `FileBlock`，请求组装时投影为「文件名 + 字节数 + 只读路径」句柄，Agent 用文件工具读取处理
+  - 新增 `host/incoming.ts`（跨平台附件模型 + 有界下载）、`host/email-mime.ts`（纯 RFC 的 MIME 解析器）
+  - 各平台接入明细：
+    - **企业微信智能机器人**：`message.image` / `message.file` / `message.video` / `message.mixed`（群聊配图路径）/ `message.voice`；用官方 SDK `downloadFile(url, aeskey)` 完成 AES-256-CBC 解密
+    - **飞书**：`image` / `file` / `audio` / `media` / 富文本 `post`；走官方「获取消息中的资源文件」`messageResource.get`（**不是** `im/v1/images`，后者只能下载机器人自己上传的图）
+    - **钉钉**：`picture` / `richText` / `audio` / `video` / `file`；两步下载（`robot/messageFiles/download` 换 URL → GET），音频取官方 `recognition` 识别文本
+    - **Telegram**：`photo`（显式挑最大尺寸）/ `document` / `animation` / `video` / `voice` / `audio` / `video_note` / `sticker`，并支持附件说明文字 `caption`；`getFile` → file URL 下载，遵守官方 20MB 上限
+    - **Discord**：`attachments[]`（官方要求合法 `User-Agent`，401/403 时带 Bot 鉴权重试）；`embeds` 仅取标题与链接**不抓取外链**（避免 SSRF）
+    - **QQ 机器人**：`attachments[]` 直连下载；语音 `asr_refer_text` 作文本；引用消息 `msg_elements[].attachments` 递归处理
+    - **微信 iLink**：按官方 `item_list[].type`（1 文本 / 2 图片 / 3 语音 / 4 文件 / 5 视频）分支，`CDNMedia` 下载后 **AES-128-ECB 解密**（兼容两种 `aes_key` 编码，图片优先 `image_item.aeskey` 十六进制）
+    - **Email**：`BODYSTRUCTURE` 解析 MIME 树取 text/plain 正文，附件按 `Content-Disposition`（未知类型按 attachment）识别；支持 RFC 2231 `filename*` 与 RFC 2047 encoded-word 中文文件名、base64（忽略字母表外字符）/ quoted-printable 解码；拉取统一用 `BODY.PEEK` 不置已读
+- **绝不静默丢弃**：所有平台对未识别的消息类型一律给出**用户可见的回复**（如「收到钉钉『video』类型消息，暂不支持处理」），不再出现"发了消息却毫无响应"；纯附件邮件（无正文）同样进入 Agent
+- README 新增「**各平台官方限制（非本插件缺陷）**」章节（中/英/西三语），逐条列明官方能力边界（企微图片仅单聊、钉钉群聊收不到音视频文件、Telegram 20MB、Discord 需 `MESSAGE_CONTENT` 意图、音视频只能以文件形式交付等）
+
+### Fixed
+
+- **深色模式下侧边栏悬停提示不可见**：`dsh-gw-tip` 误用不存在的 `--dsw-alias-bg-elevated` → 回退为白底，而深色主题的 `--dsw-alias-label-primary` 是浅色，形成「白底 + 浅字」而看不见。改用官方侧边栏 tooltip token `--dsw-specific-tip`（浅色 `#f5f6f7` / 深色 `#353638`），与 `--dsw-alias-label-primary` 正确配对
+
 ## [0.1.33] - 2026-09-08
 
 ### Added

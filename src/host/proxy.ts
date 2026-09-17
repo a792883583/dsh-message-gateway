@@ -87,3 +87,24 @@ export async function smartFetch(url: string | URL, init?: RequestInit): Promise
     json: () => res.json(),
   }
 }
+
+/**
+ * 与 {@link smartFetch} 同源，但用于下载二进制（附件）。
+ * 境外 CDN 同样走代理；返回状态码与字节流。
+ */
+export async function smartFetchBinary(
+  url: string | URL,
+  init?: RequestInit,
+): Promise<{ status: number; arrayBuffer: () => Promise<ArrayBuffer> }> {
+  const urlStr = String(url)
+  const isOverseas = /discord\.com|discordapp\.com|telegram\.org|api\.openai\.com/i.test(urlStr)
+  if (isOverseas) {
+    const dispatcher = await getProxyDispatcher()
+    if (dispatcher) {
+      const res = await undiciFetch(urlStr, { ...init, dispatcher } as any)
+      return { status: res.status, arrayBuffer: () => res.arrayBuffer() }
+    }
+  }
+  const res = await fetch(url, init)
+  return { status: res.status, arrayBuffer: () => res.arrayBuffer() }
+}

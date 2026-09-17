@@ -48,6 +48,12 @@ DSH Web GUI 的消息平台网关插件：在侧边栏「新会话」按钮下�
   - **斜杠命令**：`/help` / `/time` / `/status` / `/stats`（含中文别名：帮助/菜单/时间/状态/统计）；`/stats` 展示各平台桥连接状态与活跃会话数
   - **Agent 主动推送工具**（`send_chat_message`）：自动向 DSH 注册通用推送工具，AI 助手在对话中可自主调用该工具将总结、任务结果或告警（含文字与图片截图）推送至企业微信、Telegram、Discord、钉钉等平台
 - **Webhook 接收端点**：`POST /gateway/webhook/in` 接收外部系统消息（`text` / `content` / `message` 任一字段），注入专用 agent 会话并同步返回完整回复；可配置 HMAC-SHA256 签名密钥校验（契约见 [docs/webhooks.md](docs/webhooks.md)）
+- **图片与文件附件接收（全平台）**：各平台按官方文档解析并下载用户发来的附件，交给 Agent 处理
+  - **图片** → 存入附件库并以**多模态**交给模型（可直接识别画面内容）
+  - **其它文件**（PDF / Excel / Word / 压缩包等任意类型）→ 以「文件名 + 字节数 + **只读路径**」句柄交给 Agent，Agent 用文件工具读取处理
+  - 已接入：企业微信智能机器人（`image` / `file` / `video` / `mixed` 图文混排）、飞书（`image` / `file` / `audio` / `media` / 富文本 `post`）、钉钉（`picture` / `richText` / `audio` / `video` / `file`）、Telegram（`photo` / `document` / `animation` / `video` / `voice` / `audio` / `video_note` / `sticker`，含 `caption` 说明文字）、Discord（`attachments[]`）、QQ 机器人（`attachments[]`，含引用消息递归与语音 `asr_refer_text`）、微信 ilink（`item_list` 图片 / 语音 / 文件 / 视频，含 CDN AES 解密）、Email（标准 MIME 附件，支持 RFC 2231 中文文件名与 base64 / quoted-printable 解码）
+  - **绝不静默丢弃**：任何未识别的消息类型都会收到一条用户可见的提示（如「收到该类型消息，暂不支持处理」），不会出现"发了消息却毫无响应"的情况
+  - 各平台存在**官方侧限制**，见下方「[各平台官方限制](#各平台官方限制非本插件缺陷)」
 - **微信个人号（可选外部网关）**：对接本机 Wechaty HTTP 网关的扫码登录与状态轮询（契约见 [docs/wechaty-gateway.md](docs/wechaty-gateway.md)）
 - **多语言**：中文 / English / Español，自动跟随 DSH Web 界面语言（西班牙语浏览器自动切换），默认简体中文
 - 明暗主题跟随 DSH Web GUI
@@ -82,6 +88,30 @@ dsh plugin --profile web add dsh-message-gateway
 | `botModel` | `{provider, model}` | 无 | 可选：机器人专用模型（优先于部署默认模型；不填则与 Web 对话一致） |
 | `autoStartWecom` | boolean | `true` | 启动时自动用已保存的企业微信智能机器人凭据连接 |
 | `groupReply` | boolean | `true` | 是否回复群聊消息（false 时只处理单聊） |
+
+## 各平台官方限制（非本插件缺陷）
+
+下列限制**全部来自各平台官方接口的能力边界**（每条都可在官方文档中查证），不是本插件的 bug。
+遇到这些行为时，请对照本表判断——它们**无法通过改插件绕过**：
+
+| 平台 | 官方限制 | 说明 |
+| --- | --- | --- |
+| 企业微信智能机器人 | **图片消息仅单聊可用** | 官方文档明确：`image` 类型仅支持单聊；**群聊里 @机器人 配图走 `mixed`（图文混排）**，本插件已同时接入两者 |
+| 企业微信智能机器人 | 媒体 URL **5 分钟内有效**、`aeskey` 每个链接唯一 | 官方要求收到事件后立即下载，URL 过期只能请用户重发 |
+| 企业微信智能机器人 | 文件 / 视频回调上限 **100MB** | 官方限制 |
+| 钉钉 | **群聊 @机器人 收不到 `audio` / `video` / `file`** | 官方文档明确：群聊仅支持 `text` / `picture` / `richText`；语音、视频、文件**只在单聊**（人与机器人会话）可用 |
+| 钉钉 | `downloadCode` 有时效 | 官方要求收到后尽快换取下载链接，过期报 `invalidParameter.robotCode.downloadCode` |
+| 飞书 | **表情包（`sticker`）不支持下载** | 官方文档明确不支持获取表情包资源；本插件会给出可见提示 |
+| 飞书 | 富文本 / 卡片内资源、合并转发子消息不支持下载 | 官方限制（传对应 ID 返回 `234043`） |
+| Telegram | **下载上限 20MB** | 官方文档明确：Bot 下载文件上限 20MB，超出需自建 **Local Bot API Server**；本插件会提示未下载 |
+| Discord | **必须开启 `MESSAGE_CONTENT` 特权意图** | 官方文档明确：未开启时 `content` / `embeds` / `attachments` 等字段**恒为空数组**，插件拿不到附件。需在 Discord 开发者后台申请并通过审核 |
+| Discord | 外链嵌入（embeds）不下载 | 用户粘贴的外链由本插件**刻意不抓取**（避免 SSRF 风险），只把标题与链接作为文本交给 Agent |
+| QQ 机器人 | 接收侧附件 `url` 的请求头要求与有效期**官方未说明** | 本插件按普通 HTTPS GET 实现（官方文档未要求特殊请求头，也未给出有效期） |
+| 微信 ilink | **无公开官方文档** | 该协议为腾讯内部/半开放接口；本插件字段名与解密流程取自**腾讯官方 npm 包源码**，可信但无文档承诺，平台可能无通知变更 |
+| 全平台 | **视频 / 语音不是"看画面 / 听声音"** | 模型无法直接理解音视频内容。本插件将其作为**文件**交给 Agent（提供文件名 + 只读路径），Agent 可用工具读取文件本体或转写后再处理 |
+| Email | `8bit` / `binary` 编码的附件按文本 literal 读取 | 本插件 IMAP 实现以文本字面量获取 part，对 `base64` / `quoted-printable`（实际绝大多数附件）解码精确；`8bit`/`binary` 属罕见情形 |
+
+> 如果你遇到的现象**不在上表中**，那可能是本插件的问题——欢迎[提 Issue](https://github.com/a792883583/dsh-message-gateway/issues)。
 
 ## 文档
 

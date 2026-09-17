@@ -13,15 +13,61 @@
 import crypto from 'node:crypto'
 import type { BridgeStatus } from './wecom-bridge.ts'
 import type { ChatIdentity, ReplySink } from './bridge-manager.ts'
+import { downloadBytes, type IncomingAttachment } from './incoming.ts'
 
 const ILINK_BASE_URL = 'https://ilinkai.weixin.qq.com'
 const ILINK_APP_ID = 'bot'
 // 0x00020408 = 2.4.8
 const ILINK_CLIENT_VERSION = ((2 & 0xff) << 16) | ((4 & 0xff) << 8) | (8 & 0xff)
 
+/** 媒体 CDN 基址（腾讯官方客户端实现中的常量）。 */
+const ILINK_CDN_BASE = 'https://novac2c.cdn.weixin.qq.com/c2c'
+/** 媒体下载上限（官方客户端实现中的常量）。 */
+const ILINK_MEDIA_MAX_BYTES = 100 * 1024 * 1024
+
+/** item_list[].type：官方 MessageItemType。1=文本 2=图片 3=语音 4=文件 5=视频。 */
+const ITEM_TEXT = 1
+const ITEM_IMAGE = 2
+const ITEM_VOICE = 3
+const ITEM_FILE = 4
+const ITEM_VIDEO = 5
+
+/**
+ * 解析 CDNMedia.aes_key 为 16 字节 AES 密钥。
+ * 官方实现支持两种编码：base64(16 原始字节) 与 base64(16 字节的 hex 字符串)。
+ */
+function parseIlinkAesKey(aesKeyBase64: string): Buffer {
+  const decoded = Buffer.from(aesKeyBase64, 'base64')
+  if (decoded.length === 16) return decoded
+  if (decoded.length === 32 && /^[0-9a-fA-F]{32}$/.test(decoded.toString('ascii'))) {
+    return Buffer.from(decoded.toString('ascii'), 'hex')
+  }
+  throw new Error(`aes_key 无法识别（解码后 ${decoded.length} 字节）`)
+}
+
+/** CDN 下载地址：优先 full_url，否则用 encrypted_query_param 拼接（官方客户端回退逻辑）。 */
+function ilinkMediaUrl(media: { encrypt_query_param?: unknown; full_url?: unknown }): string {
+  if (typeof media.full_url === 'string' && media.full_url !== '') return media.full_url
+  const param = typeof media.encrypt_query_param === 'string' ? media.encrypt_query_param : ''
+  return `${ILINK_CDN_BASE}/download?encrypted_query_param=${encodeURIComponent(param)}`
+}
+
+/**
+ * 下载并 AES-128-ECB(PKCS7) 解密一段 ilink CDN 媒体。
+ * 无 aes_key 时按明文下载（官方实现同样有明文分支）。
+ */
+async function downloadIlinkMedia(media: Record<string, unknown>): Promise<Uint8Array> {
+  const encrypted = await downloadBytes(ilinkMediaUrl(media), { maxBytes: ILINK_MEDIA_MAX_BYTES })
+  const aesKey = typeof media.aes_key === 'string' ? media.aes_key : ''
+  if (aesKey === '') return encrypted
+  const key = parseIlinkAesKey(aesKey)
+  const decipher = crypto.createDecipheriv('aes-128-ecb', key, null)
+  return new Uint8Array(Buffer.concat([decipher.update(Buffer.from(encrypted)), decipher.final()]))
+}
+
 export interface WechatIlinkBridgeCallbacks {
   onStatus: (status: BridgeStatus) => void
-  onText: (text: string, identity: ChatIdentity) => void
+  onText: (text: string, identity: ChatIdentity, attachments?: IncomingAttachment[]) => void
 }
 
 export interface WechatIlinkCred {
@@ -191,7 +237,7 @@ export class WechatIlinkBridge {
         for (const msg of msgs) {
           // 消息类型：1=USER，2=BOT。仅处理用户消息
           if (msg.message_type !== 1) continue
-          this.handleInboundMessage(msg)
+          void this.handleInboundMessage(msg)
         }
       } catch (err) {
         if (this.stopped) break
@@ -207,20 +253,68 @@ export class WechatIlinkBridge {
   /**
    * 处理单条从微信拉取到的消息。
    */
-  private handleInboundMessage(msg: any): void {
+  private async handleInboundMessage(msg: any): Promise<void> {
     const fromUser = String(msg.from_user_id ?? '')
     if (!fromUser) return
 
-    // 提取文本内容
+    // 逐 item 解析（官方 MessageItemType：1=文本 2=图片 3=语音 4=文件 5=视频）。
+    // 注意 message_type 只表示方向（1=USER），内容类型在 item_list[].type。
     let text = ''
-    if (Array.isArray(msg.item_list)) {
-      for (const item of msg.item_list) {
-        if (item.type === 1 && item.text_item?.text) {
-          text += (text ? '\n' : '') + String(item.text_item.text).trim()
+    const attachments: IncomingAttachment[] = []
+    const notes: string[] = []
+    const items: any[] = Array.isArray(msg.item_list) ? msg.item_list : []
+    for (const item of items) {
+      if (item.type === ITEM_TEXT && item.text_item?.text) {
+        text += (text ? '\n' : '') + String(item.text_item.text).trim()
+        continue
+      }
+      if (item.type === ITEM_IMAGE) {
+        const img = item.image_item
+        if (img?.media === undefined) continue
+        try {
+          // 官方实现：图片优先用 image_item.aeskey（hex），否则用 media.aes_key（base64）。
+          const aesKey = typeof img.aeskey === 'string' && img.aeskey !== ''
+            ? Buffer.from(img.aeskey, 'hex').toString('base64')
+            : img.media.aes_key
+          const data = await downloadIlinkMedia({ ...img.media, aes_key: aesKey })
+          attachments.push({ kind: 'image', data })
+        } catch (error) {
+          notes.push(`（图片接收失败：${error instanceof Error ? error.message : String(error)}）`)
         }
+        continue
+      }
+      if (item.type === ITEM_VOICE) {
+        const voice = item.voice_item
+        // 官方提供 ASR 文本（voice_item.text），可直接作为文本使用。
+        if (typeof voice?.text === 'string' && voice.text.trim() !== '') {
+          text += (text ? '\n' : '') + voice.text.trim()
+        }
+        if (voice?.media !== undefined) {
+          try {
+            const data = await downloadIlinkMedia(voice.media)
+            attachments.push({ kind: 'file', data, name: 'voice.silk' })
+          } catch (error) {
+            notes.push(`（语音接收失败：${error instanceof Error ? error.message : String(error)}）`)
+          }
+        }
+        continue
+      }
+      if (item.type === ITEM_FILE || item.type === ITEM_VIDEO) {
+        const node = item.type === ITEM_FILE ? item.file_item : item.video_item
+        if (node?.media === undefined) continue
+        const fallbackName = item.type === ITEM_FILE ? 'file.bin' : 'video.mp4'
+        const name = typeof node.file_name === 'string' && node.file_name !== '' ? node.file_name : fallbackName
+        try {
+          const data = await downloadIlinkMedia(node.media)
+          attachments.push({ kind: 'file', data, name })
+        } catch (error) {
+          notes.push(`（${item.type === ITEM_FILE ? '文件' : '视频'}接收失败：${error instanceof Error ? error.message : String(error)}）`)
+        }
+        continue
       }
     }
-    if (!text) return
+    if (notes.length > 0) text = text === '' ? notes.join('\n') : `${text}\n${notes.join('\n')}`
+    if (text === '' && attachments.length === 0) return
 
     const contextToken = msg.context_token ?? ''
     const sessionId = msg.session_id || fromUser
@@ -274,7 +368,7 @@ export class WechatIlinkBridge {
       chatType: msg.group_id ? 'group' : 'single',
     }
 
-    this.callbacks.onText(text, identity)
+    this.callbacks.onText(text, identity, attachments.length > 0 ? attachments : undefined)
   }
 
   /**

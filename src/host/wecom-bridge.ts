@@ -6,8 +6,12 @@
  */
 
 import AiBot, { WSClient } from '@wecom/aibot-node-sdk'
-import type { EventMessageWith, EnterChatEvent, WsFrame, TextMessage } from '@wecom/aibot-node-sdk'
+import type {
+  BaseMessage, EventMessageWith, EnterChatEvent, FileMessage, ImageMessage, MixedMessage,
+  VideoMessage, VoiceMessage, WsFrame, TextMessage,
+} from '@wecom/aibot-node-sdk'
 import { WecomSmartsheetClient, type CreateSmartsheetOptions, type CreateSmartsheetResult } from './wecom-smartsheet.ts'
+import type { IncomingAttachment } from './incoming.ts'
 
 export interface BridgeStatus {
   state: 'idle' | 'connecting' | 'connected' | 'error'
@@ -17,8 +21,8 @@ export interface BridgeStatus {
 
 export interface WecomBridgeCallbacks {
   onStatus(status: BridgeStatus): void
-  /** 收到文本消息（frame 可用于 reply 回发）。 */
-  onText(text: string, frame: WsFrame<TextMessage>): void
+  /** 收到文本消息（frame 可用于 reply 回发）；attachments 为随附的图片/文件。 */
+  onText(text: string, frame: WsFrame<BaseMessage>, attachments?: IncomingAttachment[]): void
   /** 用户当天首次进入单聊会话。 */
   onEnter(frame: WsFrame<EventMessageWith<EnterChatEvent>>): void
 }
@@ -81,6 +85,72 @@ export class WecomBridge {
     })
     client.on('message.text', (frame: WsFrame<TextMessage>) => {
       const content = frame.body?.text?.content ?? ''
+      if (content.trim() !== '') this.callbacks.onText(content, frame)
+    })
+    // ---- 媒体消息（官方长连接文档：image/file/video 为 url+aeskey，需下载后 AES 解密）----
+    client.on('message.image', async (frame: WsFrame<ImageMessage>) => {
+      const img = frame.body?.image
+      if (img?.url === undefined || img.url === '') return
+      try {
+        // SDK 的 downloadFile 内部完成「GET 加密资源 → AES-256-CBC 解密」，
+        // 官方文档：url 5 分钟内有效、aeskey 每个链接唯一，必须立即下载。
+        const { buffer, filename } = await client.downloadFile(img.url, img.aeskey)
+        if (buffer.byteLength === 0) throw new Error('下载结果为空')
+        this.callbacks.onText('', frame, [{ kind: 'image', data: new Uint8Array(buffer), name: filename }])
+      } catch (err) {
+        this.callbacks.onText(`（图片接收失败：${err instanceof Error ? err.message : String(err)}）`, frame)
+      }
+    })
+    client.on('message.file', async (frame: WsFrame<FileMessage>) => {
+      const f = frame.body?.file
+      if (f?.url === undefined || f.url === '') return
+      try {
+        const { buffer, filename } = await client.downloadFile(f.url, f.aeskey)
+        if (buffer.byteLength === 0) throw new Error('下载结果为空')
+        this.callbacks.onText('', frame, [{ kind: 'file', data: new Uint8Array(buffer), name: filename }])
+      } catch (err) {
+        this.callbacks.onText(`（文件接收失败：${err instanceof Error ? err.message : String(err)}）`, frame)
+      }
+    })
+    client.on('message.video', async (frame: WsFrame<VideoMessage>) => {
+      const v = frame.body?.video
+      if (v?.url === undefined || v.url === '') return
+      try {
+        const { buffer, filename } = await client.downloadFile(v.url, v.aeskey)
+        if (buffer.byteLength === 0) throw new Error('下载结果为空')
+        this.callbacks.onText('', frame, [{ kind: 'file', data: new Uint8Array(buffer), name: filename ?? 'video.mp4' }])
+      } catch (err) {
+        this.callbacks.onText(`（视频接收失败：${err instanceof Error ? err.message : String(err)}）`, frame)
+      }
+    })
+    // 图文混排（官方文档：群聊 @机器人 配图走 mixed，msg_item 中 text/image 交替）。
+    client.on('message.mixed', async (frame: WsFrame<MixedMessage>) => {
+      const items = frame.body?.mixed?.msg_item ?? []
+      const texts: string[] = []
+      const attachments: IncomingAttachment[] = []
+      for (const item of items) {
+        if (item.msgtype === 'text') {
+          const t = item.text?.content ?? ''
+          if (t.trim() !== '') texts.push(t.trim())
+        } else if (item.msgtype === 'image' && item.image?.url) {
+          try {
+            // mixed 子项图片官方示例可能不带 aeskey：带了就解密，没带按官方 SDK
+            // 行为原样下载（SDK 缺 aeskey 时 warn 并返回密文——密文无法直接用，
+            // 但至少不静默丢弃，给用户可见提示）。
+            const { buffer } = await client.downloadFile(item.image.url, item.image.aeskey)
+            if (buffer.byteLength > 0) {
+              attachments.push({ kind: 'image', data: new Uint8Array(buffer) })
+            }
+          } catch (err) {
+            texts.push(`（图片接收失败：${err instanceof Error ? err.message : String(err)}）`)
+          }
+        }
+      }
+      this.callbacks.onText(texts.join('\n'), frame, attachments.length > 0 ? attachments : undefined)
+    })
+    // 语音：官方文档明确「已转为文本」，直接作为文本处理。
+    client.on('message.voice', (frame: WsFrame<VoiceMessage>) => {
+      const content = frame.body?.voice?.content ?? ''
       if (content.trim() !== '') this.callbacks.onText(content, frame)
     })
     client.on('event.enter_chat', (frame: WsFrame<EventMessageWith<EnterChatEvent>>) => {

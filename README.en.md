@@ -47,6 +47,12 @@ A message-platform gateway plugin for the DSH Web GUI: a "Message platforms" ent
   - **Message routing rules** (plugin config `routes`): route messages by "platform + keyword prefix" to a specific **agent preset** (isolated session) with an optional **dedicated model / skill**
   - **Agent push tool** (`send_chat_message`): automatically registers a universal message-pushing tool for DSH agents, allowing AI assistants to proactively send summaries, task results, or alerts (including screenshots and text) to WeCom, Telegram, Discord, DingTalk, etc.
 - **Webhook receive endpoint**: `POST /gateway/webhook/in` accepts messages from external systems, injects them into the dedicated agent session and returns the full reply synchronously; optional HMAC-SHA256 signature validation
+- **Image & file attachment receiving (all platforms)**: each platform parses and downloads attachments according to its official documentation and hands them to the Agent
+  - **Images** → stored in the attachment store and passed to the model as **multimodal content** (the model can actually see the picture)
+  - **Any other file** (PDF / Excel / Word / archives …) → handed to the Agent as a handle of "file name + byte size + **read-only path**", which the Agent reads with its file tools
+  - Covered: WeCom AI bot (`image` / `file` / `video` / `mixed`), Feishu (`image` / `file` / `audio` / `media` / rich-text `post`), DingTalk (`picture` / `richText` / `audio` / `video` / `file`), Telegram (`photo` / `document` / `animation` / `video` / `voice` / `audio` / `video_note` / `sticker`, including `caption`), Discord (`attachments[]`), QQ bot (`attachments[]`, with quoted-message recursion and voice `asr_refer_text`), WeChat iLink (`item_list` image / voice / file / video, with CDN AES decryption), Email (standard MIME attachments, RFC 2231 Chinese filenames, base64 / quoted-printable decoding)
+  - **Never silently dropped**: any unrecognised message type gets a user-visible notice (e.g. "received this message type, not supported yet") — you will never send something and get no response at all
+  - Each platform has its own **official limits** — see "[Platform limits](#platform-limits-official-not-our-bug)" below
 - **Multilingual**: Chinese / English / Español, following the DSH Web UI language; defaults to Simplified Chinese
 - Light / dark theme follows the DSH Web GUI
 
@@ -77,6 +83,29 @@ All options have defaults and the plugin works out of the box; tune them via `ds
 | `maxChatAgents` | number | `40` | Max chat sessions kept per bot; oldest is evicted beyond this |
 | `autoStartWecom` | boolean | `true` | Auto-connect the WeCom AI bot from saved credentials at startup |
 | `groupReply` | boolean | `true` | Reply to group messages (false = single chats only) |
+
+## Platform limits (official — not our bug)
+
+Every limit below comes from the **official API capability boundary of the platform itself** (each one can be verified in that platform's documentation). They are not bugs in this plugin, and they **cannot be worked around by changing the plugin**:
+
+| Platform | Official limit | Notes |
+| --- | --- | --- |
+| WeCom AI bot | **Image messages are private-chat only** | Official docs: `image` is single-chat only; in a **group, @-mentioning the bot with a picture arrives as `mixed`** (rich text + image). This plugin handles both |
+| WeCom AI bot | Media URLs are valid for **5 minutes**, `aeskey` is unique per link | Official docs require downloading immediately; an expired URL can only be re-sent by the user |
+| WeCom AI bot | File / video callback limit **100MB** | Official limit |
+| DingTalk | **Group @-mentions cannot receive `audio` / `video` / `file`** | Official docs: groups only support `text` / `picture` / `richText`; voice, video and files work **only in private chats** |
+| DingTalk | `downloadCode` expires | Official docs require exchanging it for a download URL promptly; otherwise `invalidParameter.robotCode.downloadCode` |
+| Feishu | **Stickers (`sticker`) cannot be downloaded** | Official docs state sticker resources are not available; this plugin replies with a visible notice |
+| Feishu | Rich-text / card resources and merged-forward sub-messages cannot be downloaded | Official limitation (returns `234043`) |
+| Telegram | **20MB download limit** | Official docs: bots can download files up to 20MB; beyond that requires a self-hosted **Local Bot API Server**. This plugin reports that it did not download |
+| Discord | **`MESSAGE_CONTENT` privileged intent is required** | Official docs: without it, `content` / `embeds` / `attachments` are **always empty arrays** and the plugin cannot see attachments. Apply and get approved in the Discord Developer Portal |
+| Discord | External embeds are not downloaded | By design this plugin **does not fetch** user-supplied external links (SSRF safety); it only passes the title and URL to the Agent as text |
+| QQ bot | Request headers and validity of the inbound attachment `url` are **undocumented** | This plugin performs a plain HTTPS GET (official docs specify no special header and no TTL) |
+| WeChat iLink | **No public official documentation** | This protocol is an internal / semi-open Tencent interface; field names and the decryption flow here are taken from the **official Tencent npm package source**. Trustworthy, but not a documented contract — the platform may change silently |
+| All platforms | **Video / voice are not "seen" or "heard"** | Models cannot natively understand audio or video. This plugin delivers them as **files** (name + read-only path) so the Agent can read or transcribe them with tools |
+| Email | `8bit` / `binary` encoded attachments are read as text literals | This plugin's IMAP implementation fetches parts as text literals; `base64` / `quoted-printable` (the vast majority of real attachments) decode exactly, `8bit`/`binary` is a rare edge case |
+
+> If what you are seeing is **not** in the table above, it is probably a plugin issue — please [open an Issue](https://github.com/a792883583/dsh-message-gateway/issues).
 
 ## Docs
 

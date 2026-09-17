@@ -11,11 +11,12 @@
 
 import type { BridgeStatus } from './wecom-bridge.ts'
 import type { ChatIdentity, ReplySink } from './bridge-manager.ts'
+import { downloadBytes, type IncomingAttachment } from './incoming.ts'
 import { createPrivateKey, sign, verify, type KeyObject } from 'node:crypto'
 
 export interface QQBridgeCallbacks {
   onStatus(status: BridgeStatus): void
-  onText(text: string, identity: ChatIdentity): void
+  onText(text: string, identity: ChatIdentity, attachments?: IncomingAttachment[]): void
 }
 
 const TOKEN_URL = 'https://api.bot.qq.com/app/getAppAccessToken'
@@ -25,6 +26,58 @@ const INTENTS = 1 << 25
 
 /** 被动消息 msg_id 去重窗口（官方提示相同 msg_id 可能重复推送）。 */
 const DEDUP_CAP = 64
+
+/** 附件下载上限：官方 file_type 硬限制为 200MB。 */
+const QQ_ATTACH_MAX_BYTES = 200 * 1024 * 1024
+
+/**
+ * 收集 QQ 消息附件。
+ *
+ * 官方文档（bot.q.qq.com）：图片/文件等附加内容统一由 `attachments` 携带，
+ * 不由 `message_type` 表示；单项含 url / filename / content_type / size 等。
+ * 发送/接收均按普通 HTTPS GET 下载（官方未要求特殊请求头）。
+ * 引用消息的附件位于 `msg_elements[].attachments`，为递归结构。
+ * 语音额外提供 `asr_refer_text`（ASR 参考文本），可直接作为文本使用。
+ */
+async function collectQqAttachments(
+  node: Record<string, unknown>,
+): Promise<{ attachments: IncomingAttachment[]; asrTexts: string[]; notes: string[] }> {
+  const attachments: IncomingAttachment[] = []
+  const asrTexts: string[] = []
+  const notes: string[] = []
+  const seen = new Set<string>()
+
+  const walk = async (item: Record<string, unknown>): Promise<void> => {
+    const list = Array.isArray(item.attachments) ? (item.attachments as Array<Record<string, unknown>>) : []
+    for (const a of list) {
+      const url = typeof a.url === 'string' ? a.url : ''
+      const name = typeof a.filename === 'string' && a.filename !== '' ? a.filename : '未知'
+      if (typeof a.asr_refer_text === 'string' && a.asr_refer_text.trim() !== '') {
+        asrTexts.push(a.asr_refer_text.trim())
+      }
+      if (url === '' || seen.has(url)) continue
+      seen.add(url)
+      try {
+        const data = await downloadBytes(url, { maxBytes: QQ_ATTACH_MAX_BYTES })
+        const contentType = typeof a.content_type === 'string' ? a.content_type : ''
+        // 官方 content_type 取值含 'voice' / 'file' 等非标准 MIME，故只按 image/ 前缀判图。
+        attachments.push({
+          kind: contentType.startsWith('image/') ? 'image' : 'file',
+          data,
+          mediaType: contentType === '' ? undefined : contentType,
+          name,
+        })
+      } catch (error) {
+        notes.push(`（附件「${name}」下载失败：${error instanceof Error ? error.message : String(error)}）`)
+      }
+    }
+    const elements = Array.isArray(item.msg_elements) ? (item.msg_elements as Array<Record<string, unknown>>) : []
+    for (const el of elements) await walk(el)
+  }
+
+  await walk(node)
+  return { attachments, asrTexts, notes }
+}
 
 /** 回复帧：单聊=user_openid，群聊=group_openid。 */
 export interface QqFrame {
@@ -306,9 +359,9 @@ export class QQBridge {
           this.setStatus('connected', 'qq')
           console.log('[dsh-message-gateway] qq READY')
         } else if (payload.t === 'C2C_MESSAGE_CREATE') {
-          this.handleMessage(payload.d as Record<string, unknown>, 'c2c')
+          void this.handleMessage(payload.d as Record<string, unknown>, 'c2c')
         } else if (payload.t === 'GROUP_AT_MESSAGE_CREATE') {
-          this.handleMessage(payload.d as Record<string, unknown>, 'group')
+          void this.handleMessage(payload.d as Record<string, unknown>, 'group')
         }
         break
       }
@@ -383,11 +436,10 @@ export class QQBridge {
   }
 
   /** 单聊/群聊消息分发（content 群聊已去 @前缀）。 */
-  private handleMessage(d: Record<string, unknown>, scene: 'c2c' | 'group'): void {
+  private async handleMessage(d: Record<string, unknown>, scene: 'c2c' | 'group'): Promise<void> {
     const author = d.author as { bot?: boolean; user_openid?: string; member_openid?: string } | undefined
     if (author?.bot === true) return
-    const text = typeof d.content === 'string' ? d.content.trim() : ''
-    if (text === '') return
+    let text = typeof d.content === 'string' ? d.content.trim() : ''
     const msgId = String(d.id ?? '')
     if (msgId === '') return
     // 官方提示：相同 msg_id 可能重复推送，去重。
@@ -399,6 +451,12 @@ export class QQBridge {
     }
     const openid = scene === 'c2c' ? (author?.user_openid ?? '') : String(d.group_openid ?? '')
     if (openid === '') return
+    // 官方文档：图片/文件等附加内容通过 attachments 携带（content_type 区分类型），
+    // 不由 message_type 表示；引用消息的附件在 msg_elements[].attachments（递归）。
+    const { attachments, asrTexts, notes } = await collectQqAttachments(d)
+    if (asrTexts.length > 0) text = text === '' ? asrTexts.join('\n') : `${text}\n${asrTexts.join('\n')}`
+    if (notes.length > 0) text = text === '' ? notes.join('\n') : `${text}\n${notes.join('\n')}`
+    if (text === '' && attachments.length === 0) return
     const frame: QqFrame = { openid, msgId, scene }
     const sink: ReplySink = {
       // 单聊：流式（ack 开启，「正在处理…」就地增长）；群聊：不支持流式，关闭 ack 只发定稿。
@@ -411,8 +469,8 @@ export class QQBridge {
       sink,
       chatType: scene === 'c2c' ? 'single' : 'group',
     }
-    console.log('[dsh-message-gateway] qq text', { scene, openid, text: text.slice(0, 60) })
-    this.callbacks.onText(text, identity)
+    console.log('[dsh-message-gateway] qq text', { scene, openid, text: text.slice(0, 60), atts: attachments.length })
+    this.callbacks.onText(text, identity, attachments.length > 0 ? attachments : undefined)
   }
 
   /** 停止网关连接。 */
@@ -449,7 +507,7 @@ export class QqWebhookBridge {
     private readonly appId: string,
     private readonly secret: string,
     private readonly callbackToken: string,
-    private readonly callbacks: { onText(text: string, identity: ChatIdentity): void },
+    private readonly callbacks: { onText(text: string, identity: ChatIdentity, attachments?: IncomingAttachment[]): void },
   ) {
     this.key = qqEd25519Key(callbackToken)
     this.sender = new QqMessageSender((method, path, body) => this.rest(method, path, body))
@@ -512,8 +570,17 @@ export class QqWebhookBridge {
       sink,
       chatType: scene === 'c2c' ? 'single' : 'group',
     }
-    console.log('[dsh-message-gateway] qq webhook text', { scene, openid, text: text.slice(0, 60) })
-    this.callbacks.onText(text, identity)
+    // 附件收集需要下载，属异步工作：先确认回调已接收（返回 true），再后台处理，
+    // 避免阻塞 webhook 响应导致平台重推。
+    void (async () => {
+      let body = typeof d.content === 'string' ? d.content.trim() : ''
+      const { attachments, asrTexts, notes } = await collectQqAttachments(d)
+      if (asrTexts.length > 0) body = body === '' ? asrTexts.join('\n') : `${body}\n${asrTexts.join('\n')}`
+      if (notes.length > 0) body = body === '' ? notes.join('\n') : `${body}\n${notes.join('\n')}`
+      if (body === '' && attachments.length === 0) return
+      console.log('[dsh-message-gateway] qq webhook text', { scene, openid, text: body.slice(0, 60), atts: attachments.length })
+      this.callbacks.onText(body, identity, attachments.length > 0 ? attachments : undefined)
+    })()
     return true
   }
 

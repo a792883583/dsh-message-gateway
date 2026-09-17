@@ -8,12 +8,13 @@
 
 import type { BridgeStatus } from './wecom-bridge.ts'
 import type { ChatIdentity, ReplySink } from './bridge-manager.ts'
-import { getProxyDispatcher, smartFetch } from './proxy.ts'
+import type { IncomingAttachment } from './incoming.ts'
+import { getProxyDispatcher, smartFetch, smartFetchBinary } from './proxy.ts'
 import { WebSocket as UndiciWebSocket } from 'undici'
 
 export interface DiscordBridgeCallbacks {
   onStatus(status: BridgeStatus): void
-  onText(text: string, identity: ChatIdentity): void
+  onText(text: string, identity: ChatIdentity, attachments?: IncomingAttachment[]): void
 }
 
 const GATEWAY_URL = 'wss://gateway.discord.gg/?v=10&encoding=json'
@@ -24,6 +25,8 @@ const INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15)
 
 const EDIT_INTERVAL_MS = 1200
 const MSG_LIMIT = 2000
+/** 附件下载的内存安全上限（官方默认上传上限 20MiB，Nitro/Boost 可提升）。 */
+const DISCORD_ATTACH_MAX_BYTES = 50 * 1024 * 1024
 
 interface GatewayPayload {
   op: number
@@ -120,7 +123,7 @@ export class DiscordBridge {
           this.setStatus('connected', name)
           console.log('[dsh-message-gateway] discord READY', name)
         } else if (payload.t === 'MESSAGE_CREATE') {
-          this.handleMessage(payload.d as Record<string, unknown>)
+          void this.handleMessage(payload.d as Record<string, unknown>)
         }
         break
       }
@@ -177,11 +180,45 @@ export class DiscordBridge {
     }
   }
 
-  private handleMessage(d: Record<string, unknown>): void {
+  private async handleMessage(d: Record<string, unknown>): Promise<void> {
     const author = d.author as { id?: string; bot?: boolean } | undefined
     if (author?.bot === true) return
-    const text = typeof d.content === 'string' ? d.content.trim() : ''
-    if (text === '') return
+    let text = typeof d.content === 'string' ? d.content.trim() : ''
+    const notes: string[] = []
+    const attachments: IncomingAttachment[] = []
+
+    // attachments：官方定义为「未被 embed / component 引用的附件」。
+    // 注意：未开启 MESSAGE_CONTENT(1<<15) 特权意图时该数组恒为空（官方文档明写）。
+    const rawAtts = Array.isArray(d.attachments) ? (d.attachments as Array<Record<string, unknown>>) : []
+    for (const a of rawAtts) {
+      const filename = typeof a.filename === 'string' ? a.filename : '未知'
+      const buf = await this.downloadAttachment(a)
+      if (buf === null) {
+        notes.push(`（附件「${filename}」下载失败）`)
+        continue
+      }
+      const contentType = typeof a.content_type === 'string' ? a.content_type : ''
+      attachments.push({
+        kind: contentType.startsWith('image/') ? 'image' : 'file',
+        data: buf,
+        mediaType: contentType === '' ? undefined : contentType,
+        name: filename,
+      })
+    }
+
+    // embeds：外链图片/视频的 URL 由用户提供，抓取会引入 SSRF 风险，
+    // 因此不下载，只把标题与链接作为文本交给 Agent 判断处理。
+    const embeds = Array.isArray(d.embeds) ? (d.embeds as Array<Record<string, unknown>>) : []
+    for (const e of embeds) {
+      const title = typeof e.title === 'string' ? e.title : ''
+      const url = typeof e.url === 'string' ? e.url : ''
+      if (title !== '' || url !== '') notes.push(`（嵌入内容：${title} ${url}）`.replace(/\s+/g, ' '))
+    }
+
+    if (notes.length > 0) text = text === '' ? notes.join('\n') : `${text}\n${notes.join('\n')}`
+    // 绝不静默丢弃：既无文本也无附件说明是空消息（如纯系统事件），此时才跳过。
+    if (text === '' && attachments.length === 0) return
+
     const channelId = String(d.channel_id ?? '')
     if (channelId === '') return
     const guildId = typeof d.guild_id === 'string' ? d.guild_id : ''
@@ -195,8 +232,41 @@ export class DiscordBridge {
       sink,
       chatType: guildId === '' ? 'single' : 'group',
     }
-    console.log('[dsh-message-gateway] discord text', { channelId, text: text.slice(0, 60) })
-    this.callbacks.onText(text, identity)
+    console.log('[dsh-message-gateway] discord text', { channelId, text: text.slice(0, 60), atts: attachments.length })
+    this.callbacks.onText(text, identity, attachments.length > 0 ? attachments : undefined)
+  }
+
+  /**
+   * 下载附件。官方 Reference 明确要求合法的 User-Agent（否则可能被 Cloudflare 拦截）；
+   * CDN 是签名 URL，官方未说明是否需要 Bot 鉴权，故先不带鉴权、401/403 时带 token 重试。
+   */
+  private async downloadAttachment(att: Record<string, unknown>): Promise<Uint8Array | null> {
+    const url = typeof att.url === 'string' ? att.url : ''
+    if (url === '') return null
+    const userAgent = 'DiscordBot (https://github.com/a792883583/dsh-message-gateway, 1.0.0)'
+    try {
+      let response = await smartFetchBinary(url, { headers: { 'User-Agent': userAgent }, signal: AbortSignal.timeout(60_000) })
+      if (response.status === 401 || response.status === 403) {
+        response = await smartFetchBinary(url, {
+          headers: { 'User-Agent': userAgent, authorization: `Bot ${this.token}` },
+          signal: AbortSignal.timeout(60_000),
+        })
+      }
+      if (response.status !== 200) {
+        console.warn('[dsh-message-gateway] discord attachment http', response.status)
+        return null
+      }
+      const buf = new Uint8Array(await response.arrayBuffer())
+      // 官方上传默认上限 20MiB（Nitro/Boost 可提升），这里只做内存安全兜底。
+      if (buf.byteLength > DISCORD_ATTACH_MAX_BYTES) {
+        console.warn('[dsh-message-gateway] discord attachment too large', buf.byteLength)
+        return null
+      }
+      return buf
+    } catch (error) {
+      console.warn('[dsh-message-gateway] discord attachment failed', String(error))
+      return null
+    }
   }
 
   /** 流式回复：状态合并 + 单 worker——首次发送消息，随后 PATCH 渐进更新（限频）。 */

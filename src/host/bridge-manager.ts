@@ -25,9 +25,31 @@ import { EmailBridge, type EmailCred } from './email-bridge.ts'
 import { FeishuBridge } from './feishu-bridge.ts'
 import { DingTalkBridge } from './dingtalk-bridge.ts'
 import { WechatIlinkBridge, type WechatIlinkCred } from './wechat-ilink-bridge.ts'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import type { IncomingAttachment } from './incoming.ts'
 
 /** 每个聊天最多保留的独立会话数（超出后淘汰最早创建的，释放上下文）。 */
 const DEFAULT_MAX_CHAT_AGENTS = 40
+
+/**
+ * 运行时附件存储服务（宿主 @deepseek-ai/dsh-attachment 0.1.x）的鸭子类型。
+ * 注意：本插件 node_modules 里的 dsh-attachment 是 0.1.0-rc.6（没有 saveFile /
+ * FileBlock），而宿主实际运行 0.1.6-alpha.1（有）——版本错位，故用结构类型桥接，
+ * 而不是把插件 peerDeps 锁到旧版或强行改依赖。
+ */
+interface DshAttachmentStoreLike {
+  saveImage(input: { data: Uint8Array; mediaType: string; name?: string }): Promise<unknown>
+  saveFile(input: { data: Uint8Array; name?: string }): Promise<unknown>
+}
+
+/** 附件存储支持（并会按字节校验）的图片 MIME 白名单。 */
+const IMAGE_MEDIA_TYPES: readonly string[] = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
+
+/** 平台声明的 MIME → 可存储的图片类型；不在白名单返回 null（调用方退化为文件块）。 */
+function normalizeImageMediaType(mediaType: string | undefined): string | null {
+  const t = (mediaType ?? '').trim().toLowerCase()
+  return IMAGE_MEDIA_TYPES.includes(t) ? t : null
+}
 
 /** 流式推送合并间隔（毫秒）：避免逐 token 高频全量更新，保持平台端平滑。 */
 const STREAM_PUSH_INTERVAL = 600
@@ -408,10 +430,67 @@ export class BridgeManager {
   }
 
   /**
+   * 文本 + 附件 → 内容块。
+   * - 图片：走 ctx.attachments.saveImage → ImageBlock（多模态直接交给模型）；
+   *   平台 MIME 不在受支持集合（png/jpeg/webp/gif）时退化为文件块。
+   * - 其它文件：ctx.attachments.saveFile → FileBlock（请求组装时投影为
+   *   「文件名 + 字节数 + 只读路径」句柄文本，Agent 可用文件工具读取处理）。
+   * - 任何保存失败都会产出用户可见的占位文本，绝不静默丢弃。
+   */
+  private async buildContentBlocks(text: string, attachments: IncomingAttachment[] | undefined): Promise<ContentBlock[]> {
+    const blocks: ContentBlock[] = []
+    if (text.trim() !== '') blocks.push({ type: 'text', text })
+    const list = attachments ?? []
+    if (list.length === 0) return blocks
+    // 用 ctx.get 安全探测（与上文 agentDefaultModel 的取法一致）：直接读
+    // ctx.attachments 在服务未注册/未 inject 时会抛错并让整个 fiber 失败（已踩过该坑）。
+    const store = (this.ctx as unknown as { get?: (name: string) => unknown }).get?.('attachments') as
+      | DshAttachmentStoreLike
+      | undefined
+    if (store === undefined) {
+      blocks.push({ type: 'text', text: '（收到附件，但附件存储服务不可用，无法处理）' })
+      return blocks
+    }
+    for (const att of list) {
+      try {
+        if (att.kind === 'image') {
+          const mediaType = normalizeImageMediaType(att.mediaType)
+          if (mediaType === null) {
+            const ref = await store.saveFile({ data: att.data, name: att.name })
+            blocks.push({ type: 'file', attachment: ref } as unknown as ContentBlock)
+          } else {
+            const ref = await store.saveImage({ data: att.data, mediaType, name: att.name })
+            blocks.push({ type: 'image', attachment: ref } as unknown as ContentBlock)
+          }
+        } else {
+          const ref = await store.saveFile({ data: att.data, name: att.name })
+          blocks.push({ type: 'file', attachment: ref } as unknown as ContentBlock)
+        }
+      } catch (error) {
+        // 图片字节校验失败等 → 退化为文件块；仍失败则给用户可见说明。
+        if (att.kind === 'image') {
+          try {
+            const ref = await store.saveFile({ data: att.data, name: att.name })
+            blocks.push({ type: 'file', attachment: ref } as unknown as ContentBlock)
+            continue
+          } catch {
+            /* 落到下方可见说明 */
+          }
+        }
+        blocks.push({
+          type: 'text',
+          text: `（附件「${att.name ?? '未知'}」保存失败：${error instanceof Error ? error.message : String(error)}）`,
+        })
+      }
+    }
+    return blocks
+  }
+
+  /**
    * 外部平台消息统一入口：命令优先，否则注入该聊天独立 agent 会话，
    * 回复经 sink 流式回发。所有已打通的平台共用此管线。
    */
-  async handleExternalMessage(id: ChatIdentity, rawText: string): Promise<void> {
+  async handleExternalMessage(id: ChatIdentity, rawText: string, attachments?: IncomingAttachment[]): Promise<void> {
     if (this.disposed) return
     const text = stripMention(rawText)
     const reply = (content: string): void => {
@@ -436,6 +515,12 @@ export class BridgeManager {
       // 命中则剥离前缀并把消息路由到指定 agent 预设（独立会话）。
       const route = this.matchRoute(id.key, text)
       const routedText = route !== null && route.prefix !== '' ? text.slice(route.prefix.length).trim() : text
+      // 文本 + 附件组装内容块（图片多模态；其它文件投影为句柄文本供 Agent 读取）。
+      const content = await this.buildContentBlocks(routedText, attachments)
+      if (content.length === 0) {
+        console.warn('[dsh-message-gateway] no content to send', { key: id.key })
+        return
+      }
       // 每个聊天自动创建独立会话（与 Web 对话一致；超限自动压缩由会话层内置完成）。
       const agent = await this.ensureAgentForKey(id.key, route?.rule)
       if (agent === null) {
@@ -445,7 +530,7 @@ export class BridgeManager {
       const message: UserMessage = {
         id: MessageId(`dsh-gateway-${Date.now().toString(36)}`),
         role: 'user',
-        content: [{ type: 'text', text: routedText }],
+        content,
         source: { kind: 'plugin', plugin: 'dsh-message-gateway', form: 'relay' },
       }
       const session = agent.session
@@ -570,7 +655,7 @@ export class BridgeManager {
     this.wecom?.stop()
     const bridge = new WecomBridge(cred, {
       onStatus: (status) => this.onStatusCallback?.(status),
-      onText: (rawText, frame) => {
+      onText: (rawText, frame, attachments) => {
         const body = frame.body ?? ({} as Record<string, unknown>)
         const chattype = (body as { chattype?: string }).chattype ?? 'single'
         const userid = (body.from as { userid?: string } | undefined)?.userid ?? ''
@@ -581,7 +666,7 @@ export class BridgeManager {
           // 企业微信走单一流式消息（ack → 内容 → 定稿同一条消息就地更新）；
           // 不再叠加 response_url 投递，避免出现重复消息。
         }
-        void this.handleExternalMessage({ key, frame, sink, chatType: chattype === 'group' ? 'group' : 'single' }, rawText)
+        void this.handleExternalMessage({ key, frame, sink, chatType: chattype === 'group' ? 'group' : 'single' }, rawText, attachments)
       },
       onEnter: (frame) => {
         // 用户当天首次进入单聊会话：仅在配置开启 welcomeReply（默认 false 免打扰）时回复欢迎语。
@@ -919,7 +1004,7 @@ export class BridgeManager {
     }
     const bridge = new WechatIlinkBridge(ilinkCred, {
       onStatus: (status) => this.onStatusCallback?.(status),
-      onText: (text, identity) => void this.handleExternalMessage(identity, text),
+      onText: (text, identity, attachments) => void this.handleExternalMessage(identity, text, attachments),
     })
     this.wechat = bridge
     bridge.start()
@@ -938,7 +1023,7 @@ export class BridgeManager {
       { clientId: cred.clientId ?? '', clientSecret: cred.clientSecret ?? '', robotCode: cred.robotCode },
       {
         onStatus: (status) => this.onStatusCallback?.(status),
-        onText: (text, frame) => {
+        onText: (text, frame, attachments) => {
           const identity: ChatIdentity = {
             key: `dingtalk:${frame.conversationId}`,
             frame,
@@ -953,7 +1038,7 @@ export class BridgeManager {
             },
             chatType: frame.chatType,
           }
-          void this.handleExternalMessage(identity, text)
+          void this.handleExternalMessage(identity, text, attachments)
         },
       },
     )
@@ -974,7 +1059,7 @@ export class BridgeManager {
       { appId: cred.appId ?? '', appSecret: cred.appSecret ?? '' },
       {
         onStatus: (status) => this.onStatusCallback?.(status),
-        onText: (text, frame) => {
+        onText: (text, frame, attachments) => {
           const identity: ChatIdentity = {
             key: `feishu:${frame.chatId}`,
             frame,
@@ -989,7 +1074,7 @@ export class BridgeManager {
             },
             chatType: frame.chatType,
           }
-          void this.handleExternalMessage(identity, text)
+          void this.handleExternalMessage(identity, text, attachments)
         },
       },
     )
@@ -1008,7 +1093,7 @@ export class BridgeManager {
     this.telegram?.stop()
     const bridge = new TelegramBridge(cred.token ?? '', {
       onStatus: (status) => this.onStatusCallback?.(status),
-      onText: (text, identity) => void this.handleExternalMessage(identity, text),
+      onText: (text, identity, attachments) => void this.handleExternalMessage(identity, text, attachments),
     })
     this.telegram = bridge
     bridge.start()
@@ -1025,7 +1110,7 @@ export class BridgeManager {
     this.discord?.stop()
     const bridge = new DiscordBridge(cred.token ?? '', {
       onStatus: (status) => this.onStatusCallback?.(status),
-      onText: (text, identity) => void this.handleExternalMessage(identity, text),
+      onText: (text, identity, attachments) => void this.handleExternalMessage(identity, text, attachments),
     })
     this.discord = bridge
     bridge.start()
@@ -1042,7 +1127,7 @@ export class BridgeManager {
     this.qq?.stop()
     const bridge = new QQBridge(cred.appId ?? '', cred.secret ?? '', {
       onStatus: (status) => this.onStatusCallback?.(status),
-      onText: (text, identity) => void this.handleExternalMessage(identity, text),
+      onText: (text, identity, attachments) => void this.handleExternalMessage(identity, text, attachments),
     })
     this.qq = bridge
     bridge.start()
@@ -1069,7 +1154,7 @@ export class BridgeManager {
     }
     const bridge = new EmailBridge(emailCred, {
       onStatus: (status) => this.onStatusCallback?.(status),
-      onText: (text, identity) => void this.handleExternalMessage(identity, text),
+      onText: (text, identity, attachments) => void this.handleExternalMessage(identity, text, attachments),
     })
     this.email = bridge
     bridge.start()

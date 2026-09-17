@@ -11,6 +11,8 @@ import { connect, type Socket } from 'node:net'
 import { connect as tlsConnect, type TLSSocket } from 'node:tls'
 import type { BridgeStatus } from './wecom-bridge.ts'
 import type { ChatIdentity, ReplySink } from './bridge-manager.ts'
+import { decodeBody, flattenParts, parseBodyStructure, type MimeNode } from './email-mime.ts'
+import type { IncomingAttachment } from './incoming.ts'
 
 export interface EmailCred {
   imapHost: string
@@ -25,8 +27,11 @@ export interface EmailCred {
 
 export interface EmailBridgeCallbacks {
   onStatus(status: BridgeStatus): void
-  onText(text: string, identity: ChatIdentity): void
+  onText(text: string, identity: ChatIdentity, attachments?: IncomingAttachment[]): void
 }
+
+/** 单封邮件附件下载上限（超过只提示、不下载，避免占用内存）。 */
+const EMAIL_ATTACH_MAX_BYTES = 25 * 1024 * 1024
 
 /** 轮询间隔。 */
 const POLL_MS = 30_000
@@ -216,6 +221,52 @@ export class ImapClient {
     const header = literalAt(res, 'BODY[HEADER.FIELDS (FROM SUBJECT MESSAGE-ID REFERENCES IN-REPLY-TO)]')?.value ?? ''
     const text = literalAt(res, 'BODY[TEXT]')?.value ?? ''
     return { uid, header, text }
+  }
+
+  /**
+   * 取 BODYSTRUCTURE（RFC 3501 §6.4.5）：一次拿到整棵 MIME 树，
+   * 含每个 part 的类型/参数/ID/编码/字节数与 Content-Disposition，
+   * 便于在下载正文前判断哪些是附件。BODY.PEEK 不置 \Seen。
+   */
+  async fetchStructure(id: number): Promise<MimeNode | null> {
+    let res: string
+    try {
+      res = await this.command(`FETCH ${id} (UID BODYSTRUCTURE)`, 30_000)
+    } catch {
+      return null
+    }
+    const idx = res.indexOf('BODYSTRUCTURE')
+    if (idx === -1) return null
+    const start = res.indexOf('(', idx)
+    if (start === -1) return null
+    // 括号配平截取完整 S-expression（跳过引号内内容，避免被字符串里的括号干扰）。
+    let depth = 0
+    for (let i = start; i < res.length; i += 1) {
+      const c = res[i]
+      if (c === '"') {
+        i += 1
+        while (i < res.length && res[i] !== '"') {
+          if (res[i] === '\\') i += 1
+          i += 1
+        }
+        continue
+      }
+      if (c === '(') depth += 1
+      else if (c === ')') {
+        depth -= 1
+        if (depth === 0) return parseBodyStructure(res.slice(start, i + 1))
+      }
+    }
+    return null
+  }
+
+  /**
+   * 拉取指定 part 的正文（原始编码，尚未 base64/QP 解码）。
+   * RFC 3501 §6.4.5：必须用 BODY.PEEK 以免把邮件标记为已读。
+   */
+  async fetchPart(id: number, part: string): Promise<string> {
+    const res = await this.command(`FETCH ${id} (BODY.PEEK[${part}])`, 60_000)
+    return literalAt(res, `BODY[${part}]`)?.value ?? ''
   }
 
   async markSeen(id: number): Promise<void> {
@@ -557,9 +608,63 @@ export class EmailBridge {
     const threadKey = references[0] ?? (inReplyTo !== '' ? inReplyTo : messageId)
     const from = parseAddress(headerField(fetched.header, 'From'))
     const subject = headerField(fetched.header, 'Subject')
-    const text = cleanBody(fetched.text)
+
+    // ---- MIME 结构解析（RFC 3501 BODYSTRUCTURE）----
+    // 目的：① 取 text/plain 正文（避免把 base64 附件当正文）；② 找出真正的附件 part。
+    const root = await this.imap.fetchStructure(id)
+    const parts = flattenParts(root)
+    const notes: string[] = []
+    const attachments: IncomingAttachment[] = []
+
+    // 正文：优先 text/plain（multipart/alternative 同样取纯文本那一份）。
+    const textNode = parts.find((p) => p.type === 'text' && p.subtype === 'plain')
+    let text = ''
+    if (textNode !== undefined) {
+      try {
+        const raw = await this.imap.fetchPart(id, textNode.part)
+        text = cleanBody(Buffer.from(decodeBody(raw, textNode.encoding)).toString('utf8'))
+      } catch {
+        notes.push('（正文读取失败，已回退到原始正文）')
+      }
+    }
+    if (text.trim() === '') text = cleanBody(fetched.text)
+
+    // 附件判定（RFC 2183）：disposition=attachment；
+    // 未知 disposition 且带文件名 → 按 attachment；inline 且带文件名 → 视为内嵌资源跳过。
+    for (const p of parts) {
+      if (p === textNode) continue
+      const isAttachment =
+        p.disposition === 'attachment' ||
+        (p.disposition === '' && p.filename !== '') ||
+        (p.disposition !== 'inline' && p.filename !== '' && p.disposition !== 'attachment')
+      if (!isAttachment) continue
+      if (p.filename === '') continue
+      if (p.octets > EMAIL_ATTACH_MAX_BYTES) {
+        notes.push(`（附件「${p.filename}」约 ${Math.round(p.octets / 1024 / 1024)}MB，超过上限未下载）`)
+        continue
+      }
+      try {
+        const raw = await this.imap.fetchPart(id, p.part)
+        const data = decodeBody(raw, p.encoding)
+        if (data.byteLength === 0) {
+          notes.push(`（附件「${p.filename}」为空）`)
+          continue
+        }
+        attachments.push({
+          kind: p.type === 'image' ? 'image' : 'file',
+          data,
+          mediaType: p.type === 'image' ? `image/${p.subtype}` : `${p.type}/${p.subtype}`,
+          name: p.filename,
+        })
+      } catch (error) {
+        notes.push(`（附件「${p.filename}」读取失败：${error instanceof Error ? error.message : String(error)}）`)
+      }
+    }
+
     void this.imap.markSeen(id).catch(() => {})
-    if (from === '' || text.trim() === '') return
+    if (notes.length > 0) text = text === '' ? notes.join('\n') : `${text}\n${notes.join('\n')}`
+    // 绝不静默丢弃：纯附件邮件（无正文）同样要进入 Agent。
+    if (from === '' || (text.trim() === '' && attachments.length === 0)) return
     const frame = { from, subject, threadKey }
     const sink: ReplySink = {
       ack: false, // 邮件不发送「正在处理…」回执
@@ -574,8 +679,8 @@ export class EmailBridge {
       sink,
       chatType: 'single',
     }
-    console.log('[dsh-message-gateway] email text', { from, subject: subject.slice(0, 40), len: text.length })
-    this.callbacks.onText(text, identity)
+    console.log('[dsh-message-gateway] email text', { from, subject: subject.slice(0, 40), len: text.length, atts: attachments.length })
+    this.callbacks.onText(text, identity, attachments.length > 0 ? attachments : undefined)
   }
 
   private async sendReply(frame: { from: string; subject: string }, content: string): Promise<void> {
