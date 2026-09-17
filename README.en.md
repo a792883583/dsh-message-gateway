@@ -4,11 +4,11 @@
 
 ![dsh-message-gateway UI Preview](assets/screenshot.png)
 
-A message-platform gateway plugin for the DSH Web GUI: a "Message platforms" entry below the "New session" button opens a full-screen manager for multi-platform message connectors — credential save, connection tests, status monitoring — plus a built-in persistent bridge for the WeCom AI bot: external messages drive the DSH assistant through a dedicated agent session, and replies stream back token by token. Also provides a universal proactive messaging API supporting Markdown text and native image attachments.
+A message-platform gateway plugin for the DSH Web GUI: a "Message platforms" entry in the sidebar's "Workspaces" row, immediately left of the search icon, opens a full-screen manager for multi-platform message connectors — credential save, connection tests, status monitoring — plus a built-in persistent bridge for the WeCom AI bot: external messages drive the DSH assistant through a dedicated agent session, and replies stream back token by token. Also provides a universal proactive messaging API supporting Markdown text and native image attachments.
 
 ## Features
 
-- **Sidebar entry**: a "📮 Message platforms" button below "New session" opens the full-screen manager (close with ESC or by clicking the backdrop)
+- **Sidebar entry**: a "📮 Message platforms" icon button in the sidebar's "Workspaces" row, **immediately left of the search icon** (in line with the official search / view / add buttons), opens the full-screen manager (close with ESC or by clicking the backdrop)
 - **Multi-platform connectors**: Telegram / Discord / QQ bot / WeCom / WeCom AI bot / WeChat (external Wechaty gateway) / WeChat Official Account / WhatsApp / Email / DingTalk / Feishu / Bark / ServerChan / Webhooks
   - **WeCom AI bot**: fill in `botId + secret` to establish an official SDK WebSocket connection; supports streaming replies, media upload, and **proactive image/file push**
   - **Telegram bot**: save a Bot Token to enable long polling, supporting text streaming and `sendPhoto` **proactive image push**
@@ -71,7 +71,7 @@ A message-platform gateway plugin for the DSH Web GUI: a "Message platforms" ent
 dsh plugin --profile web add dsh-message-gateway
 ```
 
-Restart `dsh web` — the "Message platforms" button appears below "New session" in the sidebar. Open the page, pick a platform, fill in credentials and click **Save** — for the WeCom AI bot, saving `botId + secret` establishes the persistent bridge immediately and you can chat with the bot in WeCom right away (same as web: per-chat sessions + automatic context compression).
+Restart `dsh web` — the "📮 Message platforms" icon button appears in the sidebar's "Workspaces" row, just left of the search icon. Open the page, pick a platform, fill in credentials and click **Save** — for the WeCom AI bot, saving `botId + secret` establishes the persistent bridge immediately and you can chat with the bot in WeCom right away (same as web: per-chat sessions + automatic context compression).
 
 ## Config
 

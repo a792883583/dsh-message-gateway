@@ -4,11 +4,11 @@
 
 ![Vista previa de dsh-message-gateway](assets/screenshot.png)
 
-Un plugin de pasarela de mensajería para la GUI web de DSH: una entrada "Plataformas de mensajería" debajo del botón "Nueva sesión" abre un gestor a pantalla completa para conectores de mensajería multiplataforma — guardado de credenciales, pruebas de conexión, monitoreo de estado — más un puente persistente integrado para el bot de IA de WeCom: los mensajes externos impulsan al asistente de DSH a través de una sesión de agente dedicada, y las respuestas se transmiten token a token. También proporciona una API universal de push proactivo que admite texto Markdown e imágenes nativas.
+Un plugin de pasarela de mensajería para la GUI web de DSH: una entrada "Plataformas de mensajería" en la fila "Espacios de trabajo" de la barra lateral, justo a la izquierda del icono de búsqueda, abre un gestor a pantalla completa para conectores de mensajería multiplataforma — guardado de credenciales, pruebas de conexión, monitoreo de estado — más un puente persistente integrado para el bot de IA de WeCom: los mensajes externos impulsan al asistente de DSH a través de una sesión de agente dedicada, y las respuestas se transmiten token a token. También proporciona una API universal de push proactivo que admite texto Markdown e imágenes nativas.
 
 ## Características
 
-- **Entrada en la barra lateral**: un botón "📮 Plataformas de mensajería" debajo de "Nueva sesión" abre el gestor a pantalla completa (cierre con ESC o haciendo clic en el fondo)
+- **Entrada en la barra lateral**: un botón de icono "📮 Plataformas de mensajería" en la fila "Espacios de trabajo", **justo a la izquierda del icono de búsqueda** (alineado con los botones oficiales de búsqueda / vista / añadir), abre el gestor a pantalla completa (cierre con ESC o haciendo clic en el fondo)
 - **Conectores multiplataforma**: Telegram / Discord / Bot de QQ / WeCom / Bot de IA de WeCom / WeChat (pasarela Wechaty externa) / Cuenta oficial de WeChat / WhatsApp / Email / DingTalk / Feishu / Bark / ServerChan / Webhooks
   - **Bot de IA de WeCom**: rellene `botId + secret` para conexión WebSocket persistente; admite respuestas en streaming, subida de medios y **envío proactivo de imágenes/archivos**
   - **Bot de Telegram**: guarde un Bot Token para sondeo largo, admite streaming y `sendPhoto` para **envío proactivo de imágenes**
@@ -71,7 +71,7 @@ Un plugin de pasarela de mensajería para la GUI web de DSH: una entrada "Plataf
 dsh plugin --profile web add dsh-message-gateway
 ```
 
-Reinicie `dsh web`: el botón "Plataformas de mensajería" aparece debajo de "Nueva sesión" en la barra lateral. Abra la página, elija una plataforma, complete las credenciales y haga clic en **Guardar** — para el Bot de IA de WeCom, guardar `botId + secret` establece el puente persistente de inmediato y puede chatear con el bot en WeCom al momento (igual que en la web: sesiones por chat + compresión automática de contexto).
+Reinicie `dsh web`: el botón de icono "📮 Plataformas de mensajería" aparece en la fila "Espacios de trabajo" de la barra lateral, justo a la izquierda del icono de búsqueda. Abra la página, elija una plataforma, complete las credenciales y haga clic en **Guardar** — para el Bot de IA de WeCom, guardar `botId + secret` establece el puente persistente de inmediato y puede chatear con el bot en WeCom al momento (igual que en la web: sesiones por chat + compresión automática de contexto).
 
 ## Configuración
 
