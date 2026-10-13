@@ -106,6 +106,8 @@ export const PLATFORMS: PlatformDef[] = [
       { key: 'smtpPort', labelKey: 'field.smtpPort', kind: 'number' },
       { key: 'smtpUser', labelKey: 'field.smtpUser', kind: 'text' },
       { key: 'smtpPass', labelKey: 'field.smtpPass', placeholderKey: 'field.secret.ph', kind: 'secret' },
+      // 安全：发件人白名单。留空 = 不限制（旧行为）；填写后只有名单内地址能进入 agent。
+      { key: 'allowedSenders', labelKey: 'field.allowedSenders', placeholderKey: 'field.allowedSenders.ph', kind: 'text' },
     ],
   },
   {

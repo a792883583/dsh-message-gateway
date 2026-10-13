@@ -1151,13 +1151,68 @@ export class BridgeManager {
       smtpPort: cred.smtpPort ?? undefined,
       smtpUser: cred.smtpUser ?? undefined,
       smtpPass: cred.smtpPass ?? undefined,
+      // 安全：发件人白名单（空 = 不限制，保持向后兼容）。
+      allowedSenders: cred.allowedSenders ?? undefined,
     }
     const bridge = new EmailBridge(emailCred, {
       onStatus: (status) => this.onStatusCallback?.(status),
-      onText: (text, identity, attachments) => void this.handleExternalMessage(identity, text, attachments),
+      onText: (text, identity, attachments) => void this.handleInboundEmail(identity, text, attachments),
     })
     this.email = bridge
     bridge.start()
+  }
+
+  /**
+   * 邮件入站分流：先问审批闸门要不要这条消息，再决定是否交给 agent。
+   *
+   * 为什么需要这一层：审批回信（"approve"）**不能**被当成一句闲聊喂给模型。
+   * 若直接把回信交给 agent，模型会看到"approve"并自由发挥，而真正的审批
+   * 状态却仍挂在原地 —— 用户以为批准了，实际什么也没发生。
+   *
+   * 因此顺序是：审批闸门先认领 → 认领了就地回执并**终止**；不认领才进 agent。
+   *
+   * 审批闸门未安装或未配置时，这个调用会快速失败（连接被拒/404），
+   * 邮件照常进入 agent —— 即"没装审批闸门"的行为与从前完全一致。
+   */
+  private async handleInboundEmail(identity: ChatIdentity, text: string, attachments?: IncomingAttachment[]): Promise<void> {
+    const claimed = await this.tryApprovalGate(identity, text)
+    if (claimed) return
+    await this.handleExternalMessage(identity, text, attachments)
+  }
+
+  /**
+   * 尝试把一条入站消息交给 dsh-approval-gate 处理。
+   *
+   * @param identity - 入站身份（含 frame.from 作为发件人）。
+   * @param text - 消息正文。
+   * @returns 是否被审批闸门认领（true = 已处理，不应再进 agent）。
+   */
+  private async tryApprovalGate(identity: ChatIdentity, text: string): Promise<boolean> {
+    const frame = identity.frame as { from?: string } | undefined
+    const sender = frame?.from ?? ''
+    if (sender === '') return false
+    const port = process.env.DSH_WEB_PORT ?? process.env.PORT ?? '3080'
+    const url = `http://127.0.0.1:${port}/approval/reply`
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sender, text }),
+        signal: AbortSignal.timeout(5000),
+      })
+      if (!res.ok) return false
+      const body = (await res.json()) as { handled?: boolean; reply?: string }
+      if (body.handled !== true) return false
+      // 已认领：把闸门的回执发回给用户，然后终止流程。
+      if (typeof body.reply === 'string' && body.reply !== '') {
+        identity.sink.stream(identity.frame, `approval-${Date.now().toString(36)}`, body.reply, true)
+      }
+      console.log('[dsh-message-gateway] inbound message claimed by approval gate', { sender, len: text.length })
+      return true
+    } catch {
+      // 审批闸门未安装 / 未监听 / 超时 —— 一律视为"不认领"，邮件照常进 agent。
+      return false
+    }
   }
 
   /** 停止 Email 桥。 */
