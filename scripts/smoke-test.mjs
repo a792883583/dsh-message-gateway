@@ -3,11 +3,14 @@
  * BridgeManager 管线、命令系统、Telegram 长轮询桥。无需真实服务器与凭据。
  * 运行：node scripts/smoke-test.mjs
  */
-import { BridgeManager } from '../lib/index.js'
 import { createServer } from 'node:http'
 import { createHash } from 'node:crypto'
 
 const nativeFetch = globalThis.fetch
+
+// 离线测试必须直连全局 WebSocket mock，禁用自动代理探测。
+process.env.DSH_GATEWAY_DISABLE_PROXY = '1'
+const { BridgeManager, TelegramBridge, DiscordBridge } = await import('../lib/index.js')
 
 function sha1Hex(parts) {
   return createHash('sha1').update([...parts].sort().join('')).digest('hex')
@@ -19,6 +22,12 @@ function check(name, cond, extra = '') {
   else { failures += 1; console.log(`  ❌ ${name} ${extra}`) }
 }
 
+// ---------- 事件总线（模拟 Cordis ctx.on，供 0.2 流式帧使用） ----------
+const listeners = new Map()
+function emit(name, payload) {
+  for (const fn of listeners.get(name) ?? []) fn(payload)
+}
+
 // ---------- 假 agent / session ----------
 function makeFakeAgent() {
   const events = []
@@ -27,19 +36,34 @@ function makeFakeAgent() {
     seq: 0,
     events,
     requestHeader: () => ({ config: {} }),
+    append: () => {},
+    snapshotEvents: () => events,
   }
   const agent = {
     session,
     send(message) {
       events.push({ type: 'user/message', seq: session.seq++, data: { message } })
-      // 模拟驱动：稍后产出 chunk + 最终消息
+      // 0.2：流式增量是瞬态帧，不进会话日志；日志里只有定稿消息与 turn/end。
       setTimeout(() => {
-        events.push({ type: 'assistant/chunk', seq: session.seq++, data: { chunk: { type: 'text-delta', text: '你好' } } })
-        events.push({ type: 'assistant/chunk', seq: session.seq++, data: { chunk: { type: 'text-delta', text: '，我是助手' } } })
+        const attemptId = 'attempt-1'
+        emit('agent/assistant-stream', { agent, frame: { type: 'start', attemptId, revision: 1, turn: 1, step: 1 } })
+        emit('agent/assistant-stream', {
+          agent,
+          frame: { type: 'chunk', attemptId, revision: 1, index: 0, time: 1, chunk: { type: 'text-delta', index: 0, text: '你好' } },
+        })
+        emit('agent/assistant-stream', {
+          agent,
+          frame: { type: 'chunk', attemptId, revision: 1, index: 1, time: 2, chunk: { type: 'text-delta', index: 1, text: '，我是助手' } },
+        })
         events.push({
           type: 'assistant/message',
           seq: session.seq++,
           data: { message: { content: [{ type: 'text', text: '你好，我是助手' }] } },
+        })
+        events.push({ type: 'turn/end', seq: session.seq++, data: { turn: 1 } })
+        emit('agent/assistant-stream', {
+          agent,
+          frame: { type: 'end', attemptId, revision: 1, index: 2, outcome: { kind: 'committed', eventType: 'assistant/message', seq: 3 } },
         })
       }, 20)
     },
@@ -52,6 +76,15 @@ const ctx = {
     name === 'agentDefaultModel'
       ? { currentSelection: () => ({ provider: 'test', model: 'test-model' }) }
       : undefined,
+  on(name, fn) {
+    const arr = listeners.get(name) ?? []
+    arr.push(fn)
+    listeners.set(name, arr)
+    return () => {
+      const left = (listeners.get(name) ?? []).filter((f) => f !== fn)
+      listeners.set(name, left)
+    }
+  },
   agents: {
     roots: () => [{ options: { model: 'test' } }],
     list: () => [],
@@ -93,7 +126,7 @@ check(
   `sids=${[...new Set(streams.map((s) => s.sid))].join(',')}`,
 )
 await new Promise((r) => setTimeout(r, 600))
-check('流式推送（chunk 累积）', streams.some((s) => s.content === '你好' && !s.finish))
+check('流式推送（chunk 累积）', streams.some((s) => s.content.includes('你好') && !s.finish))
 check('定稿推送（finish，全量内容）', streams.some((s) => s.finish && s.content === '你好，我是助手'))
 check('ack+流式+定稿 均推送', streams.length >= 3, `streams=${streams.length}`)
 
@@ -112,7 +145,6 @@ check('群聊被忽略', streams.length === 0)
 
 // ---------- 5. Telegram 桥（mock fetch 长轮询） ----------
 console.log('\n[5] Telegram 桥')
-import { TelegramBridge } from '../lib/index.js'
 const sent = []
 globalThis.fetch = async (url, init) => {
   const method = String(url).split('/').pop()
@@ -166,7 +198,6 @@ tg.stop()
 
 // ---------- 6. Discord 桥（mock WebSocket 网关） ----------
 console.log('\n[6] Discord 桥')
-import { DiscordBridge } from '../lib/index.js'
 
 class MockWebSocket {
   static OPEN = 1
@@ -203,6 +234,10 @@ const db = new DiscordBridge('FAKE_DISCORD_TOKEN', {
   },
 })
 db.start()
+// start() 会先异步探测代理再建连，等 MockWebSocket 实例出现。
+for (let i = 0; i < 60 && MockWebSocket.instances.length === 0; i += 1) {
+  await new Promise((r) => setTimeout(r, 50))
+}
 const ws = MockWebSocket.instances[0]
 // 网关握手：HELLO → IDENTIFY → READY
 ws.emit({ op: 10, d: { heartbeat_interval: 30000 } })

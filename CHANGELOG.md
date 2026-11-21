@@ -2,6 +2,15 @@
 
 本文件记录 `dsh-message-gateway` 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.1.36] - 2026-11-21
+
+### Fixed
+
+- **DSH 0.2.x 流式回发失效**：0.2 移除了持久化的 `assistant/chunk` 事件，流式增量改为 agent 作用域瞬态帧 `agent/assistant-stream`。桥接层现在全局订阅该事件，按会话 id 把文本增量接入原有节流推送管线，并按 chunk 滑动续期空闲超时；0.1 的旧事件路径保留。
+- **模型选择注入签名变更**：0.2 的 `installModelSelection` 只剩一个参数，模型路由由 `agentOptions` 固定；按函数 arity 兼容新旧签名，避免 0.1 上提示词组装抛错。
+- **客户端注入清理**：移除 0.2 已不再提供的 `@deepseek-ai/dsh-client-runtime` 注入与 peer 声明。
+- 新增 `DSH_GATEWAY_DISABLE_PROXY=1`，显式关闭境外平台自动代理探测（离线测试与直连场景使用）。
+
 ## [0.1.35] - 2026-09-17
 
 ### Changed

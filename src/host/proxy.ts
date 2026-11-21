@@ -16,6 +16,12 @@ let cachedProxyUrl: string | null | undefined = undefined
 export async function getProxyUrl(): Promise<string | null> {
   if (cachedProxyUrl !== undefined) return cachedProxyUrl
 
+  // 显式关闭代理（离线测试 / 需要直连的场景）。
+  if (process.env.DSH_GATEWAY_DISABLE_PROXY === '1') {
+    cachedProxyUrl = null
+    return null
+  }
+
   const envProxy =
     process.env.https_proxy ||
     process.env.HTTPS_PROXY ||

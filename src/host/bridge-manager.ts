@@ -2,12 +2,13 @@
  * 桥接管理：维护各平台常驻连接（企业微信智能机器人 / Telegram / Discord 等）。
  * 所有平台消息走同一管线——每个聊天（平台:chatKey）自动创建独立 agent 会话，
  * 与 Web 对话完全一致：上下文超限时由 DSH 内置压缩服务（dsh-compaction-basic）
- * 自动摘要压缩；助手回复按 token 流（assistant/chunk）节流推送回平台，结束时定稿。
+ * 自动摘要压缩；助手回复按 token 流节流推送回平台，结束时定稿。
+ * 流式来源：0.2 用 agent/assistant-stream 瞬态帧，0.1 用 assistant/chunk 会话事件。
  * @module dsh-message-gateway/host/bridge-manager
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { installModelSelection, type Agent, type AgentHandle } from '@deepseek-ai/dsh-agent'
+import { installModelSelection, type Agent, type AgentHandle, type AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { randomUUID } from 'node:crypto'
 import type { SessionEvent, UserMessage } from '@deepseek-ai/dsh-session'
@@ -27,6 +28,13 @@ import { DingTalkBridge } from './dingtalk-bridge.ts'
 import { WechatIlinkBridge, type WechatIlinkCred } from './wechat-ilink-bridge.ts'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { IncomingAttachment } from './incoming.ts'
+
+// 0.2 起消息来源不再有内建 plugin kind，由生产者自行声明。
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    plugin: { kind: 'plugin'; plugin: string; form: string }
+  }
+}
 
 /** 每个聊天最多保留的独立会话数（超出后淘汰最早创建的，释放上下文）。 */
 const DEFAULT_MAX_CHAT_AGENTS = 40
@@ -78,6 +86,10 @@ export interface ChatIdentity {
 
 /** 一条等待回复的注入请求（每个聊天独立，互不阻塞）。 */
 interface PendingReply {
+  /** 平台侧回复目标键（pendingMap 的 key）。 */
+  key: string
+  /** 该请求所属会话 id（0.2 流式帧按会话路由）。 */
+  sessionId: string
   frame: unknown
   sink: ReplySink
   streamId: string
@@ -110,6 +122,10 @@ export class BridgeManager {
   private onStatusCallback: ((status: BridgeStatus) => void) | null = null
   /** 各聊天在途回复（key = 平台:chatKey）。 */
   private pendingMap = new Map<string, PendingReply>()
+  /** 会话 id → 在途回复（0.2 流式帧按会话路由到对应平台聊天）。 */
+  private pendingBySession = new Map<string, PendingReply>()
+  /** 全局流式帧订阅的 disposer。 */
+  private disposeStreamSub: (() => void) | undefined = undefined
   /** Webhook 在途请求（同步等待完整回复；全局单槽位）。 */
   private awaiting: { resolve: (reply: string) => void } | null = null
   /** 各聊天的独立 agent 会话（key = 平台:chatKey；webhook 固定 'webhook'）。 */
@@ -120,8 +136,54 @@ export class BridgeManager {
     private readonly ctx: Context,
     private readonly config: GatewayConfig,
   ) {
-    // 回复回传通过轮询会话事件快照完成：scoped 事件（session/event）在全局
-    // 上下文收不到，而 session.events 是 append-only 快照，按 seq 推进即可。
+    // 0.2 起流式增量是 transient 的 agent/assistant-stream 帧，不再写入会话日志；
+    // 0.1 没有这个事件名，订阅本身安全。global 选项才能收到 agent 作用域发出的帧。
+    if (typeof this.ctx.on === 'function') {
+      try {
+        this.disposeStreamSub = this.ctx.on(
+          'agent/assistant-stream',
+          (payload) => this.handleAssistantStream(payload),
+          { global: true },
+        )
+      } catch (error) {
+        console.warn('[dsh-message-gateway] assistant stream subscribe skipped', error)
+      }
+    }
+  }
+
+  /** 0.2 流式帧：按会话 id 找到在途平台回复，把文本增量接到现有节流推送管线。 */
+  private handleAssistantStream(payload: { agent: { session: { id: string } }; frame: AssistantStreamFrame }): void {
+    const p = this.pendingBySession.get(payload.agent.session.id)
+    if (p === undefined) return
+    const frame = payload.frame
+    if (frame.type === 'start') {
+      // 同一轮重试时新 attempt 从 1 开始，清掉上一次未定稿的半成品，避免重复。
+      p.currentStepBuffer = ''
+      return
+    }
+    if (frame.type === 'chunk') {
+      if (frame.chunk.type !== 'text-delta' || frame.chunk.text === '') return
+      p.currentStepBuffer += frame.chunk.text
+      p.buffer = [...p.stepMessages, p.currentStepBuffer].filter(Boolean).join('\n\n')
+      this.keepAlive(p.key, p)
+      this.scheduleStream(p)
+      return
+    }
+    // end 帧只是通知；定稿仍由会话日志里的 assistant/message + turn/end 决定。
+    this.keepAlive(p.key, p)
+  }
+
+  /** 任意新事件或流式 chunk 都滑动续期兜底超时。 */
+  private keepAlive(key: string, p: PendingReply): void {
+    if (p.fallback === null) return
+    clearTimeout(p.fallback)
+    p.fallback = setTimeout(() => {
+      if (this.pendingMap.get(key) === p) {
+        console.warn('[dsh-message-gateway] idle timeout (no events for 90s)', { key })
+        this.finishPending(key)
+      }
+    }, 90 * 1000)
+    p.fallback.unref?.()
   }
 
   /** 当前语言的文案。 */
@@ -142,21 +204,12 @@ export class BridgeManager {
         const event = events[i]
         if (!event) continue
 
-        // 只要收到任意新事件（包括工具调用、思考分块），立即滑动续期超时保护（重置为 90 秒无响应才超时）
-        if (p.fallback !== null) {
-          clearTimeout(p.fallback)
-          p.fallback = setTimeout(() => {
-            if (this.pendingMap.get(key) === p) {
-              console.warn('[dsh-message-gateway] idle timeout (no events for 90s)', { key })
-              this.finishPending(key)
-            }
-          }, 90 * 1000)
-          p.fallback.unref?.()
-        }
+        // 只要收到任意新事件（包括工具调用、思考分块），立即滑动续期超时保护。
+        this.keepAlive(key, p)
 
-        // 1. 实时文本分块（流式打字效果）
+        // 1. 实时文本分块（0.1 兼容路径；0.2 走 agent/assistant-stream）。
         if (event.type === 'assistant/chunk') {
-          const chunk = (event as SessionEvent<'assistant/chunk'>).data?.chunk
+          const chunk = (event as unknown as { data?: { chunk?: { type: string; text?: string } } }).data?.chunk
           if (chunk && chunk.type === 'text-delta' && typeof chunk.text === 'string') {
             p.currentStepBuffer += chunk.text
             p.buffer = [...p.stepMessages, p.currentStepBuffer].filter(Boolean).join('\n\n')
@@ -255,6 +308,8 @@ export class BridgeManager {
       p.heartbeat = null
     }
     this.pendingMap.delete(key)
+    const pending = this.pendingBySession.get(p.sessionId)
+    if (pending === p) this.pendingBySession.delete(p.sessionId)
     // 只发过「正在处理…」但从未产出内容 → 以超时文案收尾流式消息并结束 finish=true。
     if (p.ackSent && !p.pushed) {
       void p.sink.stream(p.frame, p.streamId, this.t('timeout'), true)
@@ -287,7 +342,8 @@ export class BridgeManager {
     let model = selection?.model ?? ''
     // 兜底：服务不可用时回退已注册根 agent 的模型配置。
     if (provider === '' || model === '') {
-      const root = this.ctx.agents.roots()[0] ?? this.ctx.agents.list()[0]
+      const roots = (this.ctx.agents as { roots?: () => Agent[] }).roots?.() ?? []
+      const root = roots[0] ?? this.ctx.agents.list()[0]
       provider = root?.options.provider ?? ''
       model = root?.options.model ?? ''
     }
@@ -345,9 +401,13 @@ export class BridgeManager {
               }
             }
           }
-          // 默认模型注入（与 dsh-headless 同源）。
-          if (selection !== undefined) {
-            installModelSelection(agentCtx, { current: selection, assembled: void 0 })
+          // 0.2 的模型路由由 agentOptions 固定，installModelSelection 只装切换提示；
+          // 0.1 仍需要第二个 selection 参数，否则提示词组装时会抛 TypeError。
+          const installModel = installModelSelection as unknown as (ctx: Context, selection?: { current: unknown; assembled: unknown }) => () => void
+          if (installModelSelection.length >= 2) {
+            installModel(agentCtx, { current: selection, assembled: undefined })
+          } else {
+            installModel(agentCtx)
           }
         },
       })
@@ -389,6 +449,10 @@ export class BridgeManager {
   async dispose(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
+
+    this.disposeStreamSub?.()
+    this.disposeStreamSub = undefined
+    this.pendingBySession.clear()
 
     // 1. 立即停止所有外部长连接与长轮询，防止卸载后继续接收外部事件
     this.wecom?.stop()
@@ -535,13 +599,15 @@ export class BridgeManager {
       }
       const session = agent.session
       const p: PendingReply = {
+        key: id.key,
+        sessionId: session.id,
         frame: id.frame,
         sink: id.sink,
         streamId: `gw-${Date.now().toString(36)}`,
         buffer: '',
         stepMessages: [],
         currentStepBuffer: '',
-        cursor: session.seq,
+        cursor: session.seq as unknown as number,
         timer: null,
         fallback: null,
         pushed: false,
@@ -552,6 +618,7 @@ export class BridgeManager {
         heartbeat: null,
       }
       this.pendingMap.set(id.key, p)
+      this.pendingBySession.set(session.id, p)
       // 立即回执：复用流式 streamId（finish=false），回复内容就地在同一条消息里
       // 渐进更新（Telegram/Discord/QQ 编辑同一消息，企业微信流式消息同 id 更新）。
       if (id.sink.ack !== false) {
@@ -599,7 +666,7 @@ export class BridgeManager {
     const agent = await this.ensureAgentForKey('webhook')
     if (agent === null) return { ok: false, reply: 'no dedicated agent available' }
     const session = agent.session
-    const cursor = session.seq
+    const cursor = session.seq as unknown as number
     const message: UserMessage = {
       id: MessageId(`dsh-gw-webhook-${Date.now().toString(36)}`),
       role: 'user',
@@ -1322,7 +1389,7 @@ export class BridgeManager {
 }
 
 /** 从 assistant 消息中提取纯文本（text 块拼接）。 */
-function extractText(message: { content: Array<{ type: string; text?: string }> }): string {
+function extractText(message: { content: readonly { type: string; text?: string }[] }): string {
   return message.content
     .filter((block) => block.type === 'text' && typeof block.text === 'string')
     .map((block) => block.text ?? '')
