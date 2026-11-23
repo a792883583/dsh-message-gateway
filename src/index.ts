@@ -8,6 +8,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { Service } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-session'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -42,9 +43,33 @@ export {
 }
 export type { GatewayConfig, CreateSmartsheetOptions, CreateSmartsheetResult, SmartsheetFieldDef }
 
+/** 供其它宿主插件复用的网关服务：主动推送 + 让 AI 回答一次。 */
+export class MessageGatewayService extends Service {
+  constructor(ctx: Context, private readonly manager: BridgeManager) {
+    super(ctx, 'messageGateway')
+  }
+
+  /** 向已配置的平台推送文本（平台 id / 目标与 send_chat_message 一致）。 */
+  push(platform: string, target: string, message: string, opts: { title?: string } = {}): Promise<{ ok: boolean; detail: string }> {
+    return this.manager.pushMessage(platform, target, message, opts)
+  }
+
+  /** 把一次提示交给网关的专用 agent，等待完整回复。 */
+  ask(prompt: string, timeoutMs?: number): Promise<{ ok: boolean; reply: string }> {
+    return this.manager.sendAndWait(prompt, timeoutMs)
+  }
+}
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    messageGateway?: MessageGatewayService
+  }
+}
+
 /** 挂载网关路由并启动已配置平台的常驻桥。 */
 export function apply(ctx: Context, config: GatewayConfig = Config({} as GatewayConfig) as GatewayConfig): void {
   const manager = new BridgeManager(ctx, config)
+  new MessageGatewayService(ctx, manager)
   ctx.effect(() => {
     // 已保存的各平台凭据 → 自动建立常驻连接（配置项可关）。
     void loadStore().then((store) => {

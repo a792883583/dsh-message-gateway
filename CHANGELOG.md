@@ -2,6 +2,15 @@
 
 本文件记录 `dsh-message-gateway` 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.1.37] - 2026-11-23
+
+### Added
+
+- 新增宿主服务 `ctx.messageGateway`，供其它插件复用：
+  - `push(platform, target, message, { title })`：走已配置的平台桥主动推送；
+  - `ask(prompt, timeoutMs?)`：把一次提示交给网关专用 agent 并等待完整回复。
+  cron-panel 的执行结果推送与 git-panel 的 AI 提交文案都基于这两个方法。
+
 ## [0.1.36] - 2026-11-21
 
 ### Fixed
